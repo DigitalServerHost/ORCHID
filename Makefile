@@ -5,7 +5,7 @@
 # License: GNU GPLv3
 # ======================================================================
 
-.PHONY: help setup test build docker-up clean
+.PHONY: help setup test build dist docker-up clean
 
 # Default target listing all options
 help:
@@ -15,6 +15,7 @@ help:
 	@echo "  make setup      - Onboard fresh workspace, install python SDK in editable mode"
 	@echo "  make test       - Run Go tests, Python packaged simulator & timing loops"
 	@echo "  make build      - Compile Go concurrent execution daemon executable binary"
+	@echo "  make dist       - Build distributable Python SDK packages (wheel and tarball)"
 	@echo "  make docker-up  - Run all microservices in completely isolated Docker containers"
 	@echo "  make clean      - Delete compile outputs, caching files, and speedup traces"
 	@echo "======================================================================"
@@ -42,6 +43,12 @@ build:
 	@go build -o build/orchid-daemon ./scheduler/...
 	@echo "✓ Successfully compiled Go binary at: build/orchid-daemon"
 
+# Build Python SDK distributable packages
+dist:
+	@echo "[DIST] Building Python wheel and source distribution packages..."
+	@uv build
+	@echo "✓ Successfully built package assets in dist/"
+
 # Run compose-orchestrated isolated services
 docker-up:
 	@echo "[DOCKER] Building and launching multi-service container orchestration..."
@@ -51,6 +58,7 @@ docker-up:
 clean:
 	@echo "[CLEAN] Purging dynamic targets..."
 	@rm -rf build/
+	@rm -rf dist/
 	@rm -rf locality/build/
 	@rm -rf evidence/current/*
 	@rm -rf evidence/reproduced/*

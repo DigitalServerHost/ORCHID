@@ -22,3 +22,9 @@ __pycache__/
 *.pyc
 .vscode/
 .idea/
+
+# Python Packaging, Distributions & Virtual Environments
+dist/
+*.egg-info/
+.venv/
+.pytest_cache/
