@@ -1,0 +1,43 @@
+# ======================================================================
+# 🌸 Project ORCHID: Multi-Service Container Isolation Orchestration
+# Originator: Teppei Oohira (@gatchimuchio) / 大平鉄兵
+# Project Lead & Maintainer: Kevin West (@westkevin12)
+# License: GNU GPLv3
+# ======================================================================
+
+version: '3.8'
+
+services:
+  # 1. High-Performance Go scheduler daemon
+  orchid-daemon:
+    build:
+      context: .
+      target: developer
+    image: ramnet-orchid:latest
+    container_name: orchid-daemon
+    command: go test -v ./scheduler/...
+
+  # 2. CPU Locality Cache Timing Harness (GCC & Assembly kernels)
+  orchid-locality-benchmark:
+    build:
+      context: .
+      target: developer
+    image: ramnet-orchid:latest
+    container_name: orchid-locality-benchmark
+    working_dir: /app/locality
+    volumes:
+      - ./evidence:/app/evidence
+      - ./locality/build:/app/locality/build
+    command: ../scripts/run_locality.sh
+
+  # 3. Parallel Bank Queue Scheduler Simulator (Python)
+  orchid-simulator:
+    build:
+      context: .
+      target: developer
+    image: ramnet-orchid:latest
+    container_name: orchid-simulator
+    working_dir: /app
+    volumes:
+      - ./evidence:/app/evidence
+    command: ./scripts/run_simulator.sh

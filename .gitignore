@@ -1,0 +1,24 @@
+# Object and Library Files
+*.o
+*.so
+*.a
+
+# Generated x86-64 Assembler Kernels
+flat.S
+locality.S
+
+# Benchmark Demos & Binaries
+build/
+bin/
+locality_benchmark_fair
+locality_benchmark_audit
+
+# Timing and Execution Evidence Logs
+evidence/
+reproduced/
+
+# Python Cache & Configurations
+__pycache__/
+*.pyc
+.vscode/
+.idea/
