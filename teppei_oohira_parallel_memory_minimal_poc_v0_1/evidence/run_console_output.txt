@@ -1,0 +1,34 @@
+PARALLEL MEMORY MINIMAL POC
+workload=A[i]=B[i]+3*C[i] elements=16384
+service_cycles=100 compute_cycles=1
+VERIFY same_output checksum=-1573459
+
+case                                               cycles      speedup        requests/bank
+serial_single_memory                              4931584       1.000x              [49152]
+parallel_two_memory_role_split                    3293184       1.498x       [32768, 16384]
+parallel_three_memory_role_split                  1638501       3.010x [16384, 16384, 16384]
+parallel_two_memory_conflicted_control            4931584       1.000x           [49152, 0]
+
+INTERPRETATION
+- serial_single_memory is the undifferentiated one-service baseline.
+- parallel_two_memory_role_split is the conservative proposed minimum: independent source access is parallelized while output still shares one bank.
+- parallel_three_memory_role_split shows the upper reference when input and output roles have independent services.
+- parallel_two_memory_conflicted_control proves that merely having multiple banks gives no benefit unless roles/requests are separated correctly.
+
+BOUNDARY
+- This is a deterministic architectural scheduling proof, not a physical DRAM benchmark.
+- Physical validation requires an implementation substrate exposing independent memory service paths or hardware/FPGA/simulator support.
+
+WROTE /mnt/data/teppei_oohira_parallel_memory_minimal_poc_v0_1/evidence/current/results.csv
+WROTE /mnt/data/teppei_oohira_parallel_memory_minimal_poc_v0_1/evidence/current/results.json
+WROTE /mnt/data/teppei_oohira_parallel_memory_minimal_poc_v0_1/evidence/current/trace_first_events.csv
+Spreadsheet runtime warmup failed during python startup
+Traceback (most recent call last):
+  File "/tmp/tmp.9eeVjt35CN/artifact_tool_v2-2.7.5/artifact_tool/patches/warm_spreadsheet_runtime_on_startup.py", line 26, in warm_spreadsheet_runtime_on_startup
+  File "/tmp/tmp.9eeVjt35CN/artifact_tool_v2-2.7.5/artifact_tool/spreadsheet_warmup.py", line 785, in warm_spreadsheet_runtime
+  File "/tmp/tmp.9eeVjt35CN/artifact_tool_v2-2.7.5/artifact_tool/spreadsheet_warmup.py", line 720, in _warm_feature_flows
+  File "/tmp/tmp.9eeVjt35CN/artifact_tool_v2-2.7.5/artifact_tool/spreadsheet_warmup.py", line 704, in _warm_collaboration_flows
+  File "/tmp/tmp.9eeVjt35CN/artifact_tool_v2-2.7.5/artifact_tool/generated/interface/models.py", line 48821, in hydrate_crdt_from_proto
+  File "/tmp/tmp.9eeVjt35CN/artifact_tool_v2-2.7.5/artifact_tool/rpc/remote.py", line 747, in __call__
+  File "/tmp/tmp.9eeVjt35CN/artifact_tool_v2-2.7.5/artifact_tool/rpc/client.py", line 150, in call
+artifact_tool.rpc.client.RemoteError: hydrateCrdtFromProto requires an empty collaborative document.

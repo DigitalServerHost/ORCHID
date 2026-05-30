@@ -1,0 +1,5 @@
+case,banks_available,mapping,cycles,speedup_vs_serial,requests_per_bank,utilization_per_bank,checksum
+serial_single_memory,1,"{""A"": 0, ""B"": 0, ""C"": 0}",4931584,1.0,[49152],[0.996678],-1573459
+parallel_two_memory_role_split,2,"{""A"": 0, ""B"": 0, ""C"": 1}",3293184,1.497512,"[32768, 16384]","[0.995025, 0.497512]",-1573459
+parallel_three_memory_role_split,3,"{""A"": 2, ""B"": 0, ""C"": 1}",1638501,3.009814,"[16384, 16384, 16384]","[0.999938, 0.999938, 0.999938]",-1573459
+parallel_two_memory_conflicted_control,2,"{""A"": 0, ""B"": 0, ""C"": 0}",4931584,1.0,"[49152, 0]","[0.996678, 0.0]",-1573459

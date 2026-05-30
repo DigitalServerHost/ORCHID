@@ -1,0 +1,10 @@
+VERIFY equal N=512 operations=134217728 cache_flush_bytes=67108864
+PAIR 1 order=flat-first flat_sec=0.288885832 locality_sec=0.167683474 speedup=1.723x
+PAIR 2 order=locality-first flat_sec=0.291972646 locality_sec=0.170095791 speedup=1.717x
+PAIR 3 order=flat-first flat_sec=0.289348993 locality_sec=0.173753984 speedup=1.665x
+PAIR 4 order=locality-first flat_sec=0.292671629 locality_sec=0.171249771 speedup=1.709x
+PAIR 5 order=flat-first flat_sec=0.289208833 locality_sec=0.172675792 speedup=1.675x
+PAIR 6 order=locality-first flat_sec=0.309292583 locality_sec=0.187061702 speedup=1.653x
+PAIR 7 order=flat-first flat_sec=0.300787896 locality_sec=0.175322969 speedup=1.716x
+PAIR 8 order=locality-first flat_sec=0.286185565 locality_sec=0.171070689 speedup=1.673x
+FLUSH sink=142606336

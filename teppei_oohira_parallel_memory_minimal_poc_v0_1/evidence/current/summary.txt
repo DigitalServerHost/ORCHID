@@ -1,0 +1,20 @@
+PARALLEL MEMORY MINIMAL POC
+workload=A[i]=B[i]+3*C[i] elements=16384
+service_cycles=100 compute_cycles=1
+VERIFY same_output checksum=-1573459
+
+case                                               cycles      speedup        requests/bank
+serial_single_memory                              4931584       1.000x              [49152]
+parallel_two_memory_role_split                    3293184       1.498x       [32768, 16384]
+parallel_three_memory_role_split                  1638501       3.010x [16384, 16384, 16384]
+parallel_two_memory_conflicted_control            4931584       1.000x           [49152, 0]
+
+INTERPRETATION
+- serial_single_memory is the undifferentiated one-service baseline.
+- parallel_two_memory_role_split is the conservative proposed minimum: independent source access is parallelized while output still shares one bank.
+- parallel_three_memory_role_split shows the upper reference when input and output roles have independent services.
+- parallel_two_memory_conflicted_control proves that merely having multiple banks gives no benefit unless roles/requests are separated correctly.
+
+BOUNDARY
+- This is a deterministic architectural scheduling proof, not a physical DRAM benchmark.
+- Physical validation requires an implementation substrate exposing independent memory service paths or hardware/FPGA/simulator support.

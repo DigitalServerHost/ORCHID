@@ -1,0 +1,61 @@
+{
+  "workload": {
+    "formula": "A[i] = B[i] + scalar * C[i]",
+    "n": 16384,
+    "scalar": 3,
+    "memory_operations_per_element": [
+      "READ B",
+      "READ C",
+      "WRITE A"
+    ],
+    "service_cycles_per_memory_operation": 100,
+    "compute_cycles_after_reads": 1
+  },
+  "baseline": "serial_single_memory",
+  "results": [
+    {
+      "case": "serial_single_memory",
+      "banks_available": 1,
+      "mapping": "{\"A\": 0, \"B\": 0, \"C\": 0}",
+      "cycles": 4931584,
+      "speedup_vs_serial": 1.0,
+      "requests_per_bank": "[49152]",
+      "utilization_per_bank": "[0.996678]",
+      "checksum": -1573459
+    },
+    {
+      "case": "parallel_two_memory_role_split",
+      "banks_available": 2,
+      "mapping": "{\"A\": 0, \"B\": 0, \"C\": 1}",
+      "cycles": 3293184,
+      "speedup_vs_serial": 1.497512,
+      "requests_per_bank": "[32768, 16384]",
+      "utilization_per_bank": "[0.995025, 0.497512]",
+      "checksum": -1573459
+    },
+    {
+      "case": "parallel_three_memory_role_split",
+      "banks_available": 3,
+      "mapping": "{\"A\": 2, \"B\": 0, \"C\": 1}",
+      "cycles": 1638501,
+      "speedup_vs_serial": 3.009814,
+      "requests_per_bank": "[16384, 16384, 16384]",
+      "utilization_per_bank": "[0.999938, 0.999938, 0.999938]",
+      "checksum": -1573459
+    },
+    {
+      "case": "parallel_two_memory_conflicted_control",
+      "banks_available": 2,
+      "mapping": "{\"A\": 0, \"B\": 0, \"C\": 0}",
+      "cycles": 4931584,
+      "speedup_vs_serial": 1.0,
+      "requests_per_bank": "[49152, 0]",
+      "utilization_per_bank": "[0.996678, 0.0]",
+      "checksum": -1573459
+    }
+  ],
+  "verification": {
+    "same_logical_output": true,
+    "checksum": -1573459
+  }
+}

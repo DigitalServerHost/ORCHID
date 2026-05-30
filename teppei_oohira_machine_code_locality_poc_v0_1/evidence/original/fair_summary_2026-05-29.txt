@@ -1,0 +1,4 @@
+speedup_min=1.653x
+speedup_median=1.692x
+speedup_max=1.723x
+speedup_mean=1.691x
