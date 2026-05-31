@@ -26,7 +26,7 @@ mkdir -p "$BUILD_DIR" "$EVIDENCE_DIR"
 
 echo "----------------------------------------------------------------------"
 echo "Step 1: Parsing matmul.plan and generating raw x86-64 assembly..."
-python3 -m orchid.assembler "$ROOT_DIR/locality/matmul.plan" --out-dir "$BUILD_DIR"
+python3 -c "import sys; from orchid.assembler import main; sys.exit(main())" "$ROOT_DIR/locality/matmul.plan" --out-dir "$BUILD_DIR"
 
 echo "----------------------------------------------------------------------"
 echo "Step 2: Compiling fair_harness.c and generated assembly kernels..."
@@ -39,7 +39,7 @@ echo "Step 3: Running benchmark timing harness (alternating loop patterns)..."
 
 echo "----------------------------------------------------------------------"
 echo "Step 4: Executing results aggregator to calculate speedup statistics..."
-python3 -m orchid.aggregator \
+python3 -c "import sys; from orchid.aggregator import main; sys.exit(main())" \
   "$EVIDENCE_DIR/fair_timing_result_current_environment.txt" \
   "$EVIDENCE_DIR/fair_summary_current_environment.txt"
 

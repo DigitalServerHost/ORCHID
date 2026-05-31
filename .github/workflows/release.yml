@@ -170,8 +170,8 @@ jobs:
           username: mcpwest
           password: ${{ secrets.MCP_PAT }}
 
-      - name: "Extract Docker Metadata"
-        id: meta
+      - name: "Extract Production Docker Metadata"
+        id: meta-prod
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/digitalserverhost/orchid
@@ -182,6 +182,30 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
+      - name: "Build and Push Hardened Production Container"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          target: release-hardened
+          push: true
+          tags: ${{ steps.meta-prod.outputs.tags }}
+          labels: ${{ steps.meta-prod.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: "Extract Developer Docker Metadata"
+        id: meta-dev
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/digitalserverhost/orchid
+          tags: |
+            type=ref,event=branch,suffix=-dev
+            type=ref,event=tag,suffix=-dev
+            type=match,pattern=v(.*),group=1,suffix=-dev
+            type=sha,format=short,suffix=-dev
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
+
       - name: "Build and Push Developer Sandbox Container"
         uses: docker/build-push-action@v5
         with:
@@ -189,7 +213,7 @@ jobs:
           file: ./Dockerfile
           target: developer
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta-dev.outputs.tags }}
+          labels: ${{ steps.meta-dev.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -79,6 +79,21 @@ Instantly purges temporary compile targets (`locality/build/`), telemetry traces
 make clean
 ```
 
+## 📦 Dual-Container Architecture
+
+Project ORCHID publishes two distinct, optimized container flavors to the GitHub Container Registry under a single repository space to meet different operational environments:
+
+### 1. Hardened Production Image (`ghcr.io/digitalserverhost/orchid:latest`)
+*   **Target Stage:** `release-hardened`
+*   **Compiled Control Plane:** Compiles the `orchid` Python SDK plane into optimized C/C++ extension modules (`.so`) using **Nuitka**.
+*   **Source Protection:** Purges raw `.py` scripts inside the package namespace to prevent code extraction.
+*   **High Performance:** Execution loops for micro-kernels and role-scheduling simulators execute at native C speeds.
+
+### 2. Developer Sandbox Image (`ghcr.io/digitalserverhost/orchid:dev`)
+*   **Target Stage:** `developer`
+*   **Raw Python SDK:** Features standard, raw Python code inside the package structure.
+*   **Developer Toolset:** Includes the full Astral `uv` package manager, volume mount options, and system diagnostic sweeps for active engineering.
+
 ---
 
 ## 🛠️ Integrated Developer Onboarding & Tooling

@@ -1,0 +1,23 @@
+# Exclude Python virtual environment and compilation cache
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.nuitka-build/
+
+# Exclude native build binaries and build workspaces
+build/
+dist/
+locality/build/
+evidence/
+
+# Exclude IDE settings and version control
+.git/
+.github/
+.vscode/
+.idea/
+.sonar/
+.scannerwork/
+*.log

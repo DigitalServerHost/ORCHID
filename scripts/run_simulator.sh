@@ -24,7 +24,7 @@ echo "Creating unified evidence directory..."
 mkdir -p "$EVIDENCE_DIR"
 
 echo "Running memory bank role-mapping simulator..."
-python3 -m orchid.simulator --out-dir "$EVIDENCE_DIR"
+python3 -c "import sys; from orchid.simulator import main; sys.exit(main())" --out-dir "$EVIDENCE_DIR"
 
 echo "======================================================================"
 echo " Simulation Complete!"
