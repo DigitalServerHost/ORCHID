@@ -136,3 +136,45 @@ func TestBankedSchedulerTriad(t *testing.T) {
 		t.Errorf("Insufficient parallel speedup: %.3fx (expected > 1.5x)", speedup)
 	}
 }
+
+/**
+ * @brief Tests the NUMA physical hardware allocation and configuration API.
+ */
+func TestPhysicalNUMAAllocation(t *testing.T) {
+	scheduler, err := NewMemoryScheduler(3, 100, 10)
+	if err != nil {
+		t.Fatalf("Failed to initialize scheduler: %v", err)
+	}
+	defer scheduler.Close()
+
+	// Configure memory bank to node mappings (Bank 0 -> NUMA Node 0, Bank 1 -> NUMA Node 1, Bank 2 -> NUMA Node 0)
+	bankToNode := map[int]int{0: 0, 1: 1, 2: 0}
+	bankSize := 4096 // 4 KiB allocation
+
+	err = scheduler.EnablePhysicalNUMA(bankToNode, bankSize)
+	if err != nil {
+		t.Fatalf("Failed to enable physical NUMA configuration: %v", err)
+	}
+
+	if !scheduler.IsNUMAEnabled() {
+		t.Errorf("Expected NUMA to be enabled")
+	}
+
+	// Verify buffers are correctly mapped and can be written to
+	for bank := 0; bank < 3; bank++ {
+		buf := scheduler.GetNUMABuffer(bank)
+		if buf == nil {
+			t.Fatalf("Expected allocated buffer for bank %d, got nil", bank)
+		}
+		if len(buf) != bankSize {
+			t.Errorf("Expected buffer size %d, got %d", bankSize, len(buf))
+		}
+
+		// Perform read/write verification to trigger physical memory access
+		buf[0] = 0xAA
+		buf[bankSize-1] = 0x55
+		if buf[0] != 0xAA || buf[bankSize-1] != 0x55 {
+			t.Errorf("Memory write/read verification failed on bank %d", bank)
+		}
+	}
+}

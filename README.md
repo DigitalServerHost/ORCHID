@@ -32,6 +32,19 @@ The absolute base foundation, research primitives, and original codebase layout 
 
 ---
 
+## 📊 Reproduced Locality Performance
+
+Under identical, mathematically verified logical execution constraints (512x512 matrix size, double-triplicate verification, and total 64 MiB L1-L3 cache flushes between timing runs), the locality-aligned (I-K-J) memory mapping sweeps demonstrate exceptionally high performance improvements. Badges below are dynamically parsed from current timing sweeps:
+
+| Metric              | Speedup                                                                                                                                                                                                                                                        |
+| :------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Minimum Speedup** | ![Speedup Min](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fwestkevin12%2FRAMNET%2Ffeat%2FSIMD_Vector%2FORCHID%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.min&label=Speedup%20Min&color=blue)                |
+| **Median Speedup**  | ![Speedup Median](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fwestkevin12%2FRAMNET%2Ffeat%2FSIMD_Vector%2FORCHID%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.median&label=Speedup%20Median&color=blueviolet) |
+| **Maximum Speedup** | ![Speedup Max](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fwestkevin12%2FRAMNET%2Ffeat%2FSIMD_Vector%2FORCHID%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.max&label=Speedup%20Max&color=brightgreen)         |
+| **Mean Speedup**    | ![Speedup Mean](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fwestkevin12%2FRAMNET%2Ffeat%2FSIMD_Vector%2FORCHID%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.mean&label=Speedup%20Mean&color=orange)           |
+
+---
+
 ## 🏛️ Centralized Architectural Design & Blueprint
 
 To ensure professional documentation standards and maintain a clean, readable quickstart guide, Project ORCHID's deep technical designs, mathematical formulations, and nested folder blueprints have been centralized:

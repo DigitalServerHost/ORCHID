@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <cpuid.h>
 
 /**
  * @name Configuration Constants
@@ -52,6 +53,33 @@ extern void matmul_flat(const int32_t *a, const int32_t *b, int32_t *c);
  * @brief External Locality-Aligned (I-K-J) assembly execution kernel.
  */
 extern void matmul_locality(const int32_t *a, const int32_t *b, int32_t *c);
+
+/**
+ * @brief Dynamic CPUID hardware capability check for AVX-512 foundation support.
+ */
+static int has_avx512f(void) {
+    unsigned int eax, ebx, ecx, edx;
+    if (__get_cpuid_max(0, NULL) < 7) {
+        return 0;
+    }
+    __cpuid_count(7, 0, eax, ebx, ecx, edx);
+    return (ebx & (1 << 16)) != 0; // AVX-512 Foundation is bit 16 in EBX of CPUID leaf 7, subleaf 0
+}
+
+/**
+ * @brief Contiguous Locality-Aligned (I-K-J) fallback kernel in C.
+ * Used when the host processor does not support native AVX-512 vector instructions.
+ */
+static void matmul_locality_fallback(const int32_t *a, const int32_t *b, int32_t *c) {
+    for (int i = 0; i < N; ++i) {
+        for (int k = 0; k < N; ++k) {
+            int32_t aik = a[i * N + k];
+            for (int j = 0; j < N; ++j) {
+                c[i * N + j] += aik * b[k * N + j];
+            }
+        }
+    }
+}
 
 
 /**
@@ -165,11 +193,22 @@ int main(void) {
     memset(flush, 1, FLUSH_BYTES);
     fill(a, b);
 
+    // Detect host AVX-512 capability at runtime
+    int use_avx512 = has_avx512f();
+    if (use_avx512) {
+        printf("HARDWARE TELEMETRY: Native AVX-512 support detected. Dispatching to assembly vector kernel.\n");
+    } else {
+        printf("HARDWARE TELEMETRY: AVX-512 not supported. Dispatching to optimized scalar fallback kernel.\n");
+    }
+
+    void (*locality_kernel)(const int32_t*, const int32_t*, int32_t*) = 
+        use_avx512 ? matmul_locality : matmul_locality_fallback;
+
     // Initial warm run & arithmetic validation check
     memset(cf, 0, BYTES);
     memset(cl, 0, BYTES);
     matmul_flat(a, b, cf);
-    matmul_locality(a, b, cl);
+    locality_kernel(a, b, cl);
     
     if (!equal_output(cf, cl)) {
         free(flush); free(a); free(b); free(cf); free(cl);
@@ -191,11 +230,11 @@ int main(void) {
             flush_cache(flush);
             flat = bench(matmul_flat, a, b, cf);
             flush_cache(flush);
-            local = bench(matmul_locality, a, b, cl);
+            local = bench(locality_kernel, a, b, cl);
         } else {
             order = "locality-first";
             flush_cache(flush);
-            local = bench(matmul_locality, a, b, cl);
+            local = bench(locality_kernel, a, b, cl);
             flush_cache(flush);
             flat = bench(matmul_flat, a, b, cf);
         }
