@@ -46,6 +46,19 @@ def parse_and_summarize(input_path: Path, output_path: Path) -> str:
     )
 
     output_path.write_text(summary, encoding="utf-8")
+
+    # Generate dynamic JSON endpoints for Shields.io dynamic badges
+    import json
+    json_path = output_path.parent / "speedups.json"
+    json_path.write_text(
+        json.dumps({
+            "min": f"{min(values):.3f}x",
+            "median": f"{statistics.median(values):.3f}x",
+            "max": f"{max(values):.3f}x",
+            "mean": f"{statistics.mean(values):.3f}x"
+        }, indent=2),
+        encoding="utf-8"
+    )
     return summary
 
 

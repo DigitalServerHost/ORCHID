@@ -14,8 +14,10 @@ locality_benchmark_fair
 locality_benchmark_audit
 
 # Timing and Execution Evidence Logs
-evidence/
-reproduced/
+evidence/*
+!evidence/reproduced/
+evidence/reproduced/*
+!evidence/reproduced/speedups.json
 
 # Python Cache & Configurations
 __pycache__/

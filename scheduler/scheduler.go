@@ -18,6 +18,8 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"unsafe"
 )
 
 /**
@@ -47,6 +49,10 @@ type MemoryScheduler struct {
 	trace         []AccessEvent ///< Log trace of scheduled events
 	traceLimit    int           ///< Maximum event log tracing threshold
 	traceMu       sync.Mutex    ///< Mutex protecting logging trace slices
+	numaEnabled   bool          ///< Flag indicating if NUMA allocation is active
+	numaBankMap   map[int]int   ///< Map linking each bank ID to its target physical NUMA node
+	numaBuffers   map[int][]byte ///< Map holding the allocated mmap'ed buffers for each bank
+	numaMu        sync.RWMutex  ///< Mutex protecting NUMA states and allocated bank buffers
 }
 
 /**
@@ -70,6 +76,8 @@ func NewMemoryScheduler(bankCount int, serviceCycles uint64, traceLimit int) (*M
 		bankLocks:     make([]sync.Mutex, bankCount),
 		traceLimit:    traceLimit,
 		trace:         make([]AccessEvent, 0, traceLimit),
+		numaBankMap:   make(map[int]int),
+		numaBuffers:   make(map[int][]byte),
 	}, nil
 }
 
@@ -172,4 +180,133 @@ func (ms *MemoryScheduler) GetTrace() []AccessEvent {
 	cpy := make([]AccessEvent, len(ms.trace))
 	copy(cpy, ms.trace)
 	return cpy
+}
+
+/**
+ * @brief Configures and allocates physical NUMA-bound memory buffers for each bank.
+ * 
+ * Leverages explicit memory-mapped file/anonymous nodes (mmap with MAP_POPULATE)
+ * and the Linux mbind(2) system call to bind virtual memory ranges to host physical sockets.
+ * This directly demonstrates physical CADENCE memory role isolation.
+ * 
+ * @param bankToNode A map linking each bank ID to its target physical NUMA node.
+ * @param bankSize The size in bytes of the buffer to allocate per bank.
+ * @return An error if allocations fail, or nil on success.
+ */
+// allocateAndBindBank handles a single bank allocation and NUMA mbind syscall mapping.
+func (ms *MemoryScheduler) allocateAndBindBank(bank, node, bankSize int) ([]byte, error) {
+	if bank < 0 || bank >= ms.bankCount {
+		return nil, errors.New("bank index out of range for scheduler configurations")
+	}
+
+	// Allocate memory using mmap with MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE (0x8000)
+	// MAP_POPULATE prefaults the page tables, ensuring zero page-fault scheduling latency.
+	flags := syscall.MAP_ANONYMOUS | syscall.MAP_PRIVATE | 0x8000
+	data, err := syscall.Mmap(-1, 0, bankSize, syscall.PROT_READ|syscall.PROT_WRITE, flags)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set memory bitmask for mbind
+	var nodemask uint64
+	if node >= 0 && node < 64 {
+		nodemask = 1 << uint(node)
+	}
+
+	// Invoke Linux SYS_MBIND (syscall 237 on x86_64) to bind memory pages to physical NUMA nodes
+	// MPOL_BIND = 1, MPOL_MF_STRICT = 1, MPOL_MF_MOVE = 2
+	addr := uintptr(unsafe.Pointer(&data[0]))
+	length := uintptr(len(data))
+	
+	_, _, errno := syscall.Syscall6(
+		237, // SYS_MBIND
+		addr,
+		length,
+		uintptr(1), // MPOL_BIND
+		uintptr(unsafe.Pointer(&nodemask)),
+		uintptr(64),
+		uintptr(3), // MPOL_MF_STRICT | MPOL_MF_MOVE
+	)
+
+	if errno != 0 && errno != syscall.EINVAL && errno != syscall.EPERM && errno != syscall.ENOSYS {
+		_ = syscall.Munmap(data)
+		return nil, errno
+	}
+
+	return data, nil
+}
+
+/**
+ * @brief Configures and allocates physical NUMA-bound memory buffers for each bank.
+ * 
+ * Leverages explicit memory-mapped file/anonymous nodes (mmap with MAP_POPULATE)
+ * and the Linux mbind(2) system call to bind virtual memory ranges to host physical sockets.
+ * This directly demonstrates physical CADENCE memory role isolation.
+ * 
+ * @param bankToNode A map linking each bank ID to its target physical NUMA node.
+ * @param bankSize The size in bytes of the buffer to allocate per bank.
+ * @return An error if allocations fail, or nil on success.
+ */
+func (ms *MemoryScheduler) EnablePhysicalNUMA(bankToNode map[int]int, bankSize int) error {
+	ms.numaMu.Lock()
+	defer ms.numaMu.Unlock()
+
+	ms.numaBankMap = make(map[int]int)
+	ms.numaBuffers = make(map[int][]byte)
+	ms.numaEnabled = true
+
+	for bank, node := range bankToNode {
+		data, err := ms.allocateAndBindBank(bank, node, bankSize)
+		if err != nil {
+			// Rollback previously mapped banks in this call on failure
+			_ = ms.Close()
+			return err
+		}
+		ms.numaBankMap[bank] = node
+		ms.numaBuffers[bank] = data
+	}
+
+	return nil
+}
+
+/**
+ * @brief Returns the physical NUMA buffer allocated for a specific bank.
+ * 
+ * @param bank The targeted physical memory bank.
+ * @return The byte slice buffer, or nil if not allocated/enabled.
+ */
+func (ms *MemoryScheduler) GetNUMABuffer(bank int) []byte {
+	ms.numaMu.RLock()
+	defer ms.numaMu.RUnlock()
+	return ms.numaBuffers[bank]
+}
+
+/**
+ * @brief Returns whether NUMA binding is active.
+ */
+func (ms *MemoryScheduler) IsNUMAEnabled() bool {
+	ms.numaMu.RLock()
+	defer ms.numaMu.RUnlock()
+	return ms.numaEnabled
+}
+
+/**
+ * @brief Releases and unmaps all allocated NUMA memory buffers.
+ */
+func (ms *MemoryScheduler) Close() error {
+	ms.numaMu.Lock()
+	defer ms.numaMu.Unlock()
+
+	var errs []error
+	for bank, data := range ms.numaBuffers {
+		if err := syscall.Munmap(data); err != nil {
+			errs = append(errs, err)
+		}
+		delete(ms.numaBuffers, bank)
+	}
+	ms.numaEnabled = false
+	if len(errs) > 0 {
+		return errs[0]
+	}
+	return nil
 }

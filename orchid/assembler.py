@@ -164,11 +164,12 @@ matmul_flat:
 
 
 def emit_locality(n: int) -> str:
-    """Emits x86-64 assembly implementing locality-optimized (I-K-J) matmul.
+    """Emits x86-64 assembly implementing AVX-512 locality-optimized (I-K-J) matmul.
 
     This routine performs loop-ordered matrix multiplication where the inner
-    loop iterates over index J. The memory reads from Matrix B and updates to
-    Matrix C are contiguous (element-by-element), maximizing cache line utility.
+    loop iterates over index J in strides of 16 using AVX-512 register sets.
+    Contiguous memory streams from B are loaded into %zmm registers, multiplied by
+    the broadcasted scalar of A, and accumulated directly into C.
 
     Args:
         n: The dimension of the square matrices.
@@ -176,7 +177,7 @@ def emit_locality(n: int) -> str:
     Returns:
         A string containing the complete x86-64 assembly program.
     """
-    return f'''# Compiled Locality-Aligned (I-K-J) Matrix Multiplication Kernel
+    return f'''# Compiled Locality-Aligned (I-K-J) AVX-512 Vector Matrix Multiplication Kernel
 # Originator: Teppei Oohira (@gatchimuchio) / 大平鉄兵
 # Maintainer: Kevin West (@westkevin12)
 
@@ -203,6 +204,9 @@ matmul_locality:
     addl %r9d, %eax
     movl (%rdi,%rax,4), %r11d   # Load constant scalar A[i][k] into %r11d
 
+    # Broadcast scalar A[i][k] from %r11d into AVX-512 register %zmm0
+    vpbroadcastd %r11d, %zmm0
+
     xorl %r10d, %r10d           # %r10d = j (inner loop index)
 .Llocal_j:
     cmpl ${n}, %r10d
@@ -212,16 +216,28 @@ matmul_locality:
     movl %r9d, %eax
     imull ${n}, %eax
     addl %r10d, %eax
-    movl (%rsi,%rax,4), %r12d   # Load B[k][j]
-    imull %r11d, %r12d          # %r12d = A[i][k] * B[k][j]
+    
+    # Load 16 dense 32-bit integers from B[k][j] into %zmm1
+    vmovdqu32 (%rsi,%rax,4), %zmm1
+
+    # Multiply B[k][j] by broadcasted A[i][k] -> %zmm1 = %zmm1 * %zmm0
+    vpmulld %zmm0, %zmm1, %zmm1
 
     # Contiguous Address calculation: C[i][j] -> %rax = (i * n + j)
     movl %r8d, %eax
     imull ${n}, %eax
     addl %r10d, %eax
-    addl %r12d, (%rdx,%rax,4)   # C[i][j] += Product
+    
+    # Load 16 dense 32-bit integers from C[i][j] into %zmm2
+    vmovdqu32 (%rdx,%rax,4), %zmm2
 
-    incl %r10d                  # Increment j (linear forward step)
+    # Accumulate: C[i][j] += A[i][k] * B[k][j]
+    vpaddd %zmm1, %zmm2, %zmm2
+
+    # Store 16 elements back to C[i][j]
+    vmovdqu32 %zmm2, (%rdx,%rax,4)
+
+    addl $16, %r10d             # Increment j by 16 (linear forward step of 16 elements)
     jmp .Llocal_j
 
 .Llocal_next_k:
