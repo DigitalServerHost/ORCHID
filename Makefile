@@ -38,9 +38,11 @@ test:
 
 # Compile Go daemon core binary executable
 build:
+	@echo "[BUILD] Generating assembly modules..."
+	@python3 -c "import sys; from orchid.assembler import main; sys.exit(main())" locality/matmul.plan --out-dir cmd/orchid-daemon
 	@echo "[BUILD] Compiling Go scheduler executable daemon..."
 	@mkdir -p build
-	@go build -o build/orchid-daemon ./scheduler/...
+	@go build -o build/orchid-daemon ./cmd/orchid-daemon
 	@echo "✓ Successfully compiled Go binary at: build/orchid-daemon"
 
 # Build Python SDK distributable packages

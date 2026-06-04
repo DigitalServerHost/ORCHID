@@ -51,29 +51,30 @@ COPY . .
 CMD ["bash", "scripts/setup.sh"]
 
 # ----------------------------------------------------------------------
-# Stage 3: Hardened Release runtime copy (Compiled C Binary Modules)
+# Stage 3: Builder stage to generate assembly and compile Go daemon
 # ----------------------------------------------------------------------
-FROM base AS release-hardened
+FROM base AS release-builder
 
-# Initialize sandboxed virtual environment
-RUN uv venv --python 3.10
-ENV PATH="/app/.venv/bin:${PATH}"
-
-# Copy the entire Project ORCHID repository
+WORKDIR /app
 COPY . .
 
-# Install Nuitka and compile the Python control plane
-RUN uv pip install nuitka && \
-    python3 -m nuitka --module orchid/assembler.py --no-pyi-file --output-dir=build_nuitka && \
-    python3 -m nuitka --module orchid/simulator.py --no-pyi-file --output-dir=build_nuitka && \
-    python3 -m nuitka --module orchid/aggregator.py --no-pyi-file --output-dir=build_nuitka && \
-    # Remove raw Python files to protect IP
-    rm orchid/assembler.py orchid/simulator.py orchid/aggregator.py && \
-    # Move compiled shared object binary modules into package namespace
-    mv build_nuitka/*.so orchid/ && \
-    # Purge compilation cache and packages to shrink image
-    rm -rf build_nuitka && \
-    uv pip uninstall nuitka -y
+# Generate assembly kernels from planning specs
+RUN python3 -c \
+    "import sys; from orchid.assembler import main; sys.exit(main())" \
+    locality/matmul.plan --out-dir cmd/orchid-daemon
 
-# Default container target (executes full diagnostics setup)
-CMD ["bash", "scripts/setup.sh"]
+# Compile Go daemon binary
+RUN go build -o /app/orchid-daemon ./cmd/orchid-daemon
+
+# ----------------------------------------------------------------------
+# Stage 4: Hardened Release runtime copy (Zero-Dependency distroless)
+# ----------------------------------------------------------------------
+FROM gcr.io/distroless/base-debian12:nonroot AS release-hardened
+
+WORKDIR /app
+
+# Copy the compiled Go daemon executable
+COPY --from=release-builder /app/orchid-daemon /app/orchid-daemon
+
+# Default container target (executes full sweeps diagnostics)
+CMD ["/app/orchid-daemon", "--mode", "all"]
