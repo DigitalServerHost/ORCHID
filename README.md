@@ -128,9 +128,9 @@ Project ORCHID publishes two distinct, optimized container flavors to the GitHub
 ### 1. Hardened Production Image (`ghcr.io/digitalserverhost/orchid:latest`)
 
 - **Target Stage:** `release-hardened`
-- **Compiled Control Plane:** Compiles the `orchid` Python SDK plane into optimized C/C++ extension modules (`.so`) using **Nuitka**.
-- **Source Protection:** Purges raw `.py` scripts inside the package namespace to prevent code extraction.
-- **High Performance:** Execution loops for micro-kernels and role-scheduling simulators execute at native C speeds.
+- **Zero-Dependency Go-Native Architecture:** Package holds ONLY the compiled native Go daemon (`orchid-daemon`) on top of a minimal, hardened `distroless` Debian environment (`base-debian12:nonroot`).
+- **No Python Dependency:** Completely eliminates the Python interpreter runtime, virtual environment setup, standard library headers, and Nuitka modules to minimize runtime footprints.
+- **Maximum Security & Performance:** The image runs under a non-privileged user space and loads execution kernels at native compiled CPU speeds with minimized startup latency.
 
 ### 2. Developer Sandbox Image (`ghcr.io/digitalserverhost/orchid:dev`)
 

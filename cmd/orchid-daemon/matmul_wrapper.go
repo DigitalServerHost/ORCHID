@@ -1,0 +1,337 @@
+/**
+ * @file matmul_wrapper.go
+ * @brief Go wrapper linking C/assembly matrix kernels and executing locality timing benchmarks.
+ * 
+ * Coordinate AVX-512/scalar dispatch execution, physical memory alignment allocations,
+ * CPU cache flushes, statistical speedup analysis, and timing files creation.
+ * 
+ * Originator: Teppei Oohira (@gatchimuchio) / 大平鉄兵
+ * Project Lead & Maintainer: Kevin West (@westkevin12)
+ * License: GNU GPLv3
+ */
+
+package main
+
+/*
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+int has_avx512f(void);
+void matmul_flat(const int32_t *a, const int32_t *b, int32_t *c);
+void matmul_locality(const int32_t *a, const int32_t *b, int32_t *c);
+void matmul_locality_fallback(const int32_t *a, const int32_t *b, int32_t *c);
+void flush_cache_c(uint8_t *buf, size_t size);
+uint64_t get_flush_sink(void);
+*/
+import "C"
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+	"unsafe"
+)
+
+const (
+	N          = 512
+	Cells      = N * N
+	Bytes      = Cells * 4
+	FlushBytes = 64 * 1024 * 1024
+)
+
+/**
+ * @struct LocalityResult
+ * @brief Stores timing speedup statistics and correctness verification checksums.
+ */
+type LocalityResult struct {
+	Min      float64 `json:"min"`
+	Median   float64 `json:"median"`
+	Max      float64 `json:"max"`
+	Mean     float64 `json:"mean"`
+	Checksum int64   `json:"checksum"`
+}
+
+/**
+ * @brief Computes the median value of a slice of floats.
+ * 
+ * @param values Slice of floats to compute median for.
+ * @return The calculated median value.
+ */
+func median(values []float64) float64 {
+	if len(values) == 0 {
+		return 0.0
+	}
+	sort.Float64s(values)
+	n := len(values)
+	if n%2 == 1 {
+		return values[n/2]
+	}
+	return (values[n/2-1] + values[n/2]) / 2.0
+}
+
+/**
+ * @brief Invokes either the AVX-512 assembly kernel or the scalar fallback kernel.
+ * 
+ * @param aPtr Pointer to input matrix A.
+ * @param bPtr Pointer to input matrix B.
+ * @param clPtr Pointer to output matrix C.
+ * @param useAVX512 Flag indicating if AVX-512 should be executed.
+ */
+func executeLocalityKernel(aPtr, bPtr, clPtr unsafe.Pointer, useAVX512 bool) {
+	if useAVX512 {
+		C.matmul_locality((*C.int32_t)(aPtr), (*C.int32_t)(bPtr), (*C.int32_t)(clPtr))
+	} else {
+		C.matmul_locality_fallback((*C.int32_t)(aPtr), (*C.int32_t)(bPtr), (*C.int32_t)(clPtr))
+	}
+}
+
+/**
+ * @brief Executes pairs of flat vs locality benchmarks to measure cache speedups.
+ * 
+ * @param repeats Number of benchmark iterations to perform.
+ * @param aPtr Pointer to matrix A.
+ * @param bPtr Pointer to matrix B.
+ * @param cfPtr Pointer to flat output buffer.
+ * @param clPtr Pointer to locality output buffer.
+ * @param flushPtr Pointer to cache flushing buffer space.
+ * @param useAVX512 Flag for AVX-512 hardware support.
+ * @return Speedup values slice and printed log lines slice.
+ */
+func runBenchmarkPairs(repeats int, aPtr, bPtr, cfPtr, clPtr, flushPtr unsafe.Pointer, useAVX512 bool) ([]float64, []string) {
+	var speedups []float64
+	var timingLines []string
+
+	for r := 0; r < repeats; r++ {
+		var flatSec, localSec float64
+		var order string
+
+		if r%2 == 0 {
+			order = "flat-first"
+			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
+			C.memset(cfPtr, 0, C.size_t(Bytes))
+			t0 := time.Now()
+			C.matmul_flat((*C.int32_t)(aPtr), (*C.int32_t)(bPtr), (*C.int32_t)(cfPtr))
+			flatSec = time.Since(t0).Seconds()
+
+			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
+			C.memset(clPtr, 0, C.size_t(Bytes))
+			t0 = time.Now()
+			executeLocalityKernel(aPtr, bPtr, clPtr, useAVX512)
+			localSec = time.Since(t0).Seconds()
+		} else {
+			order = "locality-first"
+			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
+			C.memset(clPtr, 0, C.size_t(Bytes))
+			t0 := time.Now()
+			executeLocalityKernel(aPtr, bPtr, clPtr, useAVX512)
+			localSec = time.Since(t0).Seconds()
+
+			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
+			C.memset(cfPtr, 0, C.size_t(Bytes))
+			t0 = time.Now()
+			C.matmul_flat((*C.int32_t)(aPtr), (*C.int32_t)(bPtr), (*C.int32_t)(cfPtr))
+			flatSec = time.Since(t0).Seconds()
+		}
+
+		speedup := flatSec / localSec
+		speedups = append(speedups, speedup)
+
+		pairMsg := fmt.Sprintf("PAIR %d order=%s flat_sec=%.9f locality_sec=%.9f speedup=%.3fx",
+			r+1, order, flatSec, localSec, speedup)
+		fmt.Println(pairMsg)
+		timingLines = append(timingLines, pairMsg)
+	}
+
+	return speedups, timingLines
+}
+
+/**
+ * @struct BenchmarkOutputs
+ * @brief Groups together the benchmark output metrics and directory configurations.
+ */
+type BenchmarkOutputs struct {
+	OutDir       string
+	TelemetryMsg string
+	VerifyMsg    string
+	FlushSinkMsg string
+	TimingLines  []string
+	Min          float64
+	Median       float64
+	Max          float64
+	Mean         float64
+}
+
+/**
+ * @brief Outputs the timing log, statistical summaries, and JSON speedups to the file system.
+ * 
+ * @param cfg Pointer to BenchmarkOutputs configuration.
+ * @return error if any directory creation or write operation fails.
+ */
+func writeBenchmarkOutputs(cfg *BenchmarkOutputs) error {
+	if cfg.OutDir == "" {
+		return nil
+	}
+
+	if err := os.MkdirAll(cfg.OutDir, 0755); err != nil {
+		return err
+	}
+
+	// 1. Write fair_timing_result_current_environment.txt
+	timingContent := cfg.TelemetryMsg + "\n" + cfg.VerifyMsg + "\n"
+	for _, line := range cfg.TimingLines {
+		timingContent += line + "\n"
+	}
+	timingContent += cfg.FlushSinkMsg + "\n"
+	err := os.WriteFile(filepath.Join(cfg.OutDir, "fair_timing_result_current_environment.txt"), []byte(timingContent), 0644)
+	if err != nil {
+		return err
+	}
+
+	// 2. Write fair_summary_current_environment.txt
+	summaryContent := fmt.Sprintf("speedup_min=%.3fx\nspeedup_median=%.3fx\nspeedup_max=%.3fx\nspeedup_mean=%.3fx\n",
+		cfg.Min, cfg.Median, cfg.Max, cfg.Mean)
+	err = os.WriteFile(filepath.Join(cfg.OutDir, "fair_summary_current_environment.txt"), []byte(summaryContent), 0644)
+	if err != nil {
+		return err
+	}
+
+	// 3. Write speedups.json
+	speedupMap := map[string]string{
+		"min":    fmt.Sprintf("%.3fx", cfg.Min),
+		"median": fmt.Sprintf("%.3fx", cfg.Median),
+		"max":    fmt.Sprintf("%.3fx", cfg.Max),
+		"mean":   fmt.Sprintf("%.3fx", cfg.Mean),
+	}
+	speedupJSON, err := json.MarshalIndent(speedupMap, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(cfg.OutDir, "speedups.json"), append(speedupJSON, '\n'), 0644)
+}
+
+/**
+ * @brief Entry point for running the matrix cache-locality timing benchmark.
+ * 
+ * Coordinates memory allocations, registers inputs, validates flat/locality equivalence,
+ * runs the benchmarking sweeps, and writes outputs to the output directory.
+ * 
+ * @param repeats Number of benchmark pairs to execute.
+ * @param outDir Target directory to save results files.
+ * @return LocalityResult with statistics and checksum or an error.
+ */
+func RunLocalityBenchmark(repeats int, outDir string) (*LocalityResult, error) {
+	if repeats < 1 {
+		repeats = 8
+	}
+
+	// 1. Allocate 64-byte aligned memory buffers to ensure optimal AVX cache alignment
+	aPtr := C.aligned_alloc(64, C.size_t(Bytes))
+	bPtr := C.aligned_alloc(64, C.size_t(Bytes))
+	cfPtr := C.aligned_alloc(64, C.size_t(Bytes))
+	clPtr := C.aligned_alloc(64, C.size_t(Bytes))
+	flushPtr := C.aligned_alloc(64, C.size_t(FlushBytes))
+
+	if aPtr == nil || bPtr == nil || cfPtr == nil || clPtr == nil || flushPtr == nil {
+		return nil, fmt.Errorf("system failed to allocate cache-aligned buffers")
+	}
+
+	defer C.free(aPtr)
+	defer C.free(bPtr)
+	defer C.free(cfPtr)
+	defer C.free(clPtr)
+	defer C.free(flushPtr)
+
+	C.memset(flushPtr, 1, C.size_t(FlushBytes))
+
+	// Cast C pointers to Go slices for easy initialization and checksum
+	aSlice := (*[1 << 28]int32)(unsafe.Pointer(aPtr))[:Cells:Cells]
+	bSlice := (*[1 << 28]int32)(unsafe.Pointer(bPtr))[:Cells:Cells]
+	cfSlice := (*[1 << 28]int32)(unsafe.Pointer(cfPtr))[:Cells:Cells]
+	clSlice := (*[1 << 28]int32)(unsafe.Pointer(clPtr))[:Cells:Cells]
+
+	// Fill inputs with deterministic pseudo-random values
+	for i := 0; i < Cells; i++ {
+		aSlice[i] = int32((uint32(i)*17 + 3) % 7) - 3
+		bSlice[i] = int32((uint32(i)*13 + 5) % 7) - 3
+	}
+
+	// Detect host AVX-512 capability at runtime
+	useAVX512 := C.has_avx512f() != 0
+	telemetryMsg := "HARDWARE TELEMETRY: AVX-512 not supported. Dispatching to optimized scalar fallback kernel."
+	if useAVX512 {
+		telemetryMsg = "HARDWARE TELEMETRY: Native AVX-512 support detected. Dispatching to assembly vector kernel."
+	}
+	fmt.Println(telemetryMsg)
+
+	// Initial warm run & arithmetic validation check
+	C.memset(cfPtr, 0, C.size_t(Bytes))
+	C.memset(clPtr, 0, C.size_t(Bytes))
+
+	C.matmul_flat((*C.int32_t)(unsafe.Pointer(aPtr)), (*C.int32_t)(unsafe.Pointer(bPtr)), (*C.int32_t)(unsafe.Pointer(cfPtr)))
+	executeLocalityKernel(aPtr, bPtr, clPtr, useAVX512)
+
+	// Verify equal outputs
+	for i := 0; i < Cells; i++ {
+		if cfSlice[i] != clSlice[i] {
+			return nil, fmt.Errorf("MISMATCH: Verification failure at index=%d flat=%d locality=%d", i, cfSlice[i], clSlice[i])
+		}
+	}
+
+	// Calculate checksum of results
+	var checksum int64
+	for i, v := range cfSlice {
+		checksum += int64(i+1) * int64(v)
+	}
+
+	verifyMsg := fmt.Sprintf("VERIFY equal N=%d operations=%d cache_flush_bytes=%d", N, N*N*N, FlushBytes)
+	fmt.Println(verifyMsg)
+
+	// Collect timing pairs
+	speedups, timingLines := runBenchmarkPairs(repeats, aPtr, bPtr, cfPtr, clPtr, flushPtr, useAVX512)
+
+	flushSinkMsg := fmt.Sprintf("FLUSH sink=%d", C.get_flush_sink())
+	fmt.Println(flushSinkMsg)
+
+	// Compute summary statistics
+	minVal := speedups[0]
+	maxVal := speedups[0]
+	sumVal := 0.0
+	for _, v := range speedups {
+		if v < minVal {
+			minVal = v
+		}
+		if v > maxVal {
+			maxVal = v
+		}
+		sumVal += v
+	}
+	meanVal := sumVal / float64(len(speedups))
+	medianVal := median(speedups)
+
+	// Write output files
+	cfg := &BenchmarkOutputs{
+		OutDir:       outDir,
+		TelemetryMsg: telemetryMsg,
+		VerifyMsg:    verifyMsg,
+		FlushSinkMsg: flushSinkMsg,
+		TimingLines:  timingLines,
+		Min:          minVal,
+		Median:       medianVal,
+		Max:          maxVal,
+		Mean:         meanVal,
+	}
+	if err := writeBenchmarkOutputs(cfg); err != nil {
+		return nil, err
+	}
+
+	return &LocalityResult{
+		Min:      minVal,
+		Median:   medianVal,
+		Max:      maxVal,
+		Mean:     meanVal,
+		Checksum: checksum,
+	}, nil
+}
