@@ -25,6 +25,39 @@ type Kernel interface {
 }
 
 /**
+ * @struct ExecutionMetadata
+ * @brief Holds runtime details of a completed JIT kernel execution for auditing.
+ */
+type ExecutionMetadata struct {
+	N        int            ///< Matrix size (N x N)
+	APtr     unsafe.Pointer ///< Pointer to input matrix A
+	BPtr     unsafe.Pointer ///< Pointer to input matrix B
+	CPtr     unsafe.Pointer ///< Pointer to output matrix C
+	Locality bool           ///< True if locality optimization was used
+}
+
+/**
+ * @interface TraceHook
+ * @brief Interface for registering execution tracing and verification auditing tools.
+ */
+type TraceHook interface {
+	// OnExecute is invoked after a JIT kernel completes computation.
+	OnExecute(meta ExecutionMetadata)
+}
+
+// Global active trace hook registration
+var activeTraceHook TraceHook
+
+/**
+ * @brief Registers a global trace hook to capture JIT kernel execution details.
+ * 
+ * @param hook The TraceHook to register.
+ */
+func RegisterTraceHook(hook TraceHook) {
+	activeTraceHook = hook
+}
+
+/**
  * @brief Allocates memory using syscall.Mmap with read-write protections.
  * 
  * @param size The size of the memory segment to allocate in bytes.
@@ -91,6 +124,45 @@ func (k *GoFallbackKernel) Free() error {
 }
 
 /**
+ * @brief Performs a locality-optimized matrix multiplication traversal in Go.
+ * 
+ * @param n Size of the matrix (N x N).
+ * @param a Flat slice containing matrix A data.
+ * @param b Flat slice containing matrix B data.
+ * @param c Flat slice containing matrix C output data.
+ */
+func executeLocality(n int, a, b, c []int32) {
+	for i := 0; i < n; i++ {
+		for kv := 0; kv < n; kv++ {
+			r := a[i*n+kv]
+			for j := 0; j < n; j++ {
+				c[i*n+j] += r * b[kv*n+j]
+			}
+		}
+	}
+}
+
+/**
+ * @brief Performs a flat triple-loop matrix multiplication traversal in Go.
+ * 
+ * @param n Size of the matrix (N x N).
+ * @param a Flat slice containing matrix A data.
+ * @param b Flat slice containing matrix B data.
+ * @param c Flat slice containing matrix C output data.
+ */
+func executeFlat(n int, a, b, c []int32) {
+	for i := 0; i < n; i++ {
+		for j := 0; j < n; j++ {
+			var sum int32
+			for kv := 0; kv < n; kv++ {
+				sum += a[i*n+kv] * b[kv*n+j]
+			}
+			c[i*n+j] = sum
+		}
+	}
+}
+
+/**
  * @brief Executes matrix multiplication using Go fallback loops.
  * 
  * @param a Pointer to matrix A.
@@ -105,23 +177,18 @@ func (k *GoFallbackKernel) Execute(a, b, c unsafe.Pointer) {
 	cSlice := (*[1 << 28]int32)(c)[:cells:cells]
 
 	if k.Locality {
-		for i := 0; i < n; i++ {
-			for kv := 0; kv < n; kv++ {
-				r := aSlice[i*n+kv]
-				for j := 0; j < n; j++ {
-					cSlice[i*n+j] += r * bSlice[kv*n+j]
-				}
-			}
-		}
+		executeLocality(n, aSlice, bSlice, cSlice)
 	} else {
-		for i := 0; i < n; i++ {
-			for j := 0; j < n; j++ {
-				var sum int32
-				for kv := 0; kv < n; kv++ {
-					sum += aSlice[i*n+kv] * bSlice[kv*n+j]
-				}
-				cSlice[i*n+j] = sum
-			}
-		}
+		executeFlat(n, aSlice, bSlice, cSlice)
+	}
+
+	if activeTraceHook != nil {
+		activeTraceHook.OnExecute(ExecutionMetadata{
+			N:        n,
+			APtr:     a,
+			BPtr:     b,
+			CPtr:     c,
+			Locality: k.Locality,
+		})
 	}
 }

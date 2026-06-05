@@ -29,41 +29,54 @@ Project **ORCHID** is the low-level micro-architectural execution core of the RA
 
 The absolute base foundation, research primitives, and original codebase layout can be found preserved on the legacy archive branch:
 👉 **[View the Baseline Concept Code (`tree/gatchimuchio-original`)](https://github.com/DigitalServerHost/ORCHID/tree/gatchimuchio-original)**
+
 ---
 
 ## 📊 Reproduced Locality Performance
 
-Under identical, mathematically verified logical execution constraints (512x512 matrix size and double-triplicate verification), the locality-aligned memory mapping sweeps demonstrate exceptionally high performance improvements. Badges below are dynamically parsed from current timing sweeps:
+Under identical, mathematically verified logical execution constraints (512x512 matrix size and double-triplicate verification), ORCHID executes in two timing configurations. Standard Mode prioritizes raw bare-metal machine code throughput, while Trace Mode instruments execution boundaries for out-of-band ZK verification (Project VALKYRIE).
 
-| Metric              | Speedup                                                                                                                                                                                                                                       |
-| :------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Minimum Speedup** | ![Speedup Min](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.min&label=Speedup%20Min&color=blue)                |
-| **Median Speedup**  | ![Speedup Median](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.median&label=Speedup%20Median&color=blueviolet) |
-| **Maximum Speedup** | ![Speedup Max](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.max&label=Speedup%20Max&color=brightgreen)         |
-| **Mean Speedup**    | ![Speedup Mean](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.mean&label=Speedup%20Mean&color=orange)           |
+| Metric | Standard Mode (Raw Execution) | Trace Mode (Verification Hook Active) |
+| :--- | :--- | :--- |
+| **Minimum Speedup** | ![Speedup Min](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.standard.min&label=Min%20Speedup&color=blue) | ![Trace Min](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.trace.min&label=Trace%20Min&color=blueviolet) |
+| **Median Speedup** | ![Speedup Median](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.standard.median&label=Median%20Speedup&color=blue) | ![Trace Median](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.trace.median&label=Trace%20Median&color=blueviolet) |
+| **Maximum Speedup** | ![Speedup Max](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.standard.max&label=Max%20Speedup&color=brightgreen) | ![Trace Max](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.trace.max&label=Trace%20Max&color=orange) |
+| **Mean Speedup** | ![Speedup Mean](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.standard.mean&label=Mean%20Speedup&color=brightgreen) | ![Trace Mean](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.trace.mean&label=Trace%20Mean&color=orange) |
 
-> [!NOTE]
-> **Understanding the Speedup Profiles:**
-> - **Physical Cache Locality (C Harness)**: The dynamic badges above measure the hardware execution speedup of cache-blocked locality-aligned loops (matrix multiplication) over flat baselines, yielding **3.0x - 3.4x** actual hardware speedups on warm cache lines.
-> - **Parallel Memory Scheduler (Go Simulator)**: The scheduler unit tests (`TestBankedSchedulerTriad`) run a software-simulated queue model (STREAM-Triad) to measure bank serialization and parallel role routing. Because STREAM-Triad partitions requests into 3 distinct logical data streams (B-read, C-read, A-write), mapping them to 3 independent memory banks achieves a theoretical parallel speedup limit of exactly **3.0x** (which the Go scheduler hits at exactly **3.000x** cycle reduction).
+### 🔀 Parallel Memory Scheduler (CADENCE Scheduler)
+
+The parallel role scheduler (`scheduler.go`) partitions memory operations into three distinct logical streams (B-read, C-read, A-write) using a simulated STREAM-Triad memory controller queue. Scheduling these operations onto three independent hardware memory banks achieves the absolute theoretical parallel saturation limit:
+
+![Scheduler Speedup](https://img.shields.io/badge/Scheduler%20Speedup-3.000x-brightgreen)
+
+* **Theoretical Maximum:** 3.0x cycle reduction due to perfect memory-role serialization elimination.
+* **Reproduced Efficiency:** The Go scheduling model hits exactly **3.000x** parallel performance speedup.
 
 ---
 
 ## 🖥️ Platform Target Support & JIT Engine
 
 Project ORCHID features a **Heterogeneous Hardware Dispatch Plane** to scale execution guarantees across multiple architectures:
-*   **Static AOT Assembly Emitters (`orchid/assembler.py`)**: Generates target-specific optimized assembly source code:
-    - **`x86_64` (AVX-512)**: 512-bit vector registers with active `prefetcht0` preloading.
-    - **`arm64` (NEON / SVE)**: NEON registers (`v0-v31`) with `prfm pldl1keep` software lookahead prefetching offsets.
-    - **`apple_amx` (Apple Silicon)**: Low-level matrix coprocessor wrapper via `amxinit`/`amxstop` instructions.
-*   **Dynamic JIT Compiler Core (`jit/`)**: Executed natively by the Go daemon, compiling matrix sizes ($N$) into memory-resident machine code at runtime. It checks host capabilities to select the optimal path:
-    - **`AVX-512` JIT Path**: Vectorized 16-way integer strides when native AVX-512 is supported.
-    - **`AVX2` JIT Path**: Vectorized 8-way VEX-encoded SIMD utilizing memory-resident broadcasts (`vpbroadcastd`) to avoid EVEX instruction page collisions on non-AVX-512 x86_64 CPUs.
-    - **`Scalar` AMD64 JIT Path**: Standard pointer execution loops.
-    - **`ARM64/Other` Fallback**: Native Go reference model to maintain execution stability.
+
+- **Static AOT Assembly Emitters (`orchid/assembler.py`)**: Generates target-specific optimized assembly source code:
+  - **`x86_64` (AVX-512)**: 512-bit vector registers with active `prefetcht0` preloading.
+  - **`arm64` (NEON / SVE)**: NEON registers (`v0-v31`) with `prfm pldl1keep` software lookahead prefetching offsets.
+  - **`apple_amx` (Apple Silicon)**: Low-level matrix coprocessor wrapper via `amxinit`/`amxstop` instructions.
+- **Dynamic JIT Compiler Core (`jit/`)**: Executed natively by the Go daemon, compiling matrix sizes ($N$) into memory-resident machine code at runtime. It checks host capabilities to select the optimal path:
+  - **`AVX-512` JIT Path**: Vectorized 16-way integer strides when native AVX-512 is supported.
+  - **`AVX2` JIT Path**: Vectorized 8-way VEX-encoded SIMD utilizing memory-resident broadcasts (`vpbroadcastd`) to avoid EVEX instruction page collisions on non-AVX-512 x86_64 CPUs.
+  - **`Scalar` AMD64 JIT Path**: Standard pointer execution loops.
+  - **`ARM64/Other` Fallback**: Native Go reference model to maintain execution stability.
 
 ### 🔒 W^X Memory Security
+
 The JIT compiler strictly enforces **Write-XOR-Execute (W^X)** memory constraints. Page memory is allocated with write permission (`syscall.PROT_WRITE`), code is generated, and then the page is transitioned to read-execute (`syscall.PROT_EXEC`) via `syscall.Mprotect` before execution.
+
+### 🛡️ Decoupled Verification & Standalone Engine
+
+Project ORCHID is designed to be **fully standalone**; developers can run the core JIT compiler and parallel scheduling runtime completely independent of any blockchain or verification logic.
+
+To maintain raw execution performance, cryptographic proof generation is decoupled from the hot path. The codebase exports runtime execution statistics and memory pointers via a lightweight, zero-overhead tracing interface. Developers can register their own custom verification layers or plug into **[Project VALKYRIE](https://github.com/DigitalServerHost/VALKYRIE)**, which is ORCHID's default recommended open-source ZK-proving and verification layer.
 
 ---
 

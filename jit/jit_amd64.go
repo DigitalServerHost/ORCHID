@@ -50,7 +50,9 @@ func hasAVX2() bool {
  * @brief Implements Kernel interface for memory-resident AMD64 machine code blocks.
  */
 type amd64Kernel struct {
-	code []byte ///< Slice holding the JIT-allocated and marked executable byte segment
+	code     []byte ///< Slice holding the JIT-allocated and marked executable byte segment
+	N        int    ///< Matrix size (N x N)
+	Locality bool   ///< True if locality optimization was used
 }
 
 /**
@@ -62,6 +64,15 @@ type amd64Kernel struct {
  */
 func (k *amd64Kernel) Execute(a, b, c unsafe.Pointer) {
 	callJIT(unsafe.Pointer(&k.code[0]), a, b, c)
+	if activeTraceHook != nil {
+		activeTraceHook.OnExecute(ExecutionMetadata{
+			N:        k.N,
+			APtr:     a,
+			BPtr:     b,
+			CPtr:     c,
+			Locality: k.Locality,
+		})
+	}
 }
 
 /**
@@ -140,7 +151,7 @@ func CompileFlat(n int) (Kernel, error) {
 		return nil, err
 	}
 
-	return &amd64Kernel{code: code}, nil
+	return &amd64Kernel{code: code, N: n, Locality: false}, nil
 }
 
 /**
@@ -212,7 +223,7 @@ func CompileLocality(n int) (Kernel, error) {
 			return nil, err
 		}
 
-		return &amd64Kernel{code: code}, nil
+		return &amd64Kernel{code: code, N: n, Locality: true}, nil
 	} else if hasAVX2() {
 		// Emit vectorized AVX2 kernel (8-way strides)
 		template := []byte{
@@ -271,7 +282,7 @@ func CompileLocality(n int) (Kernel, error) {
 			return nil, err
 		}
 
-		return &amd64Kernel{code: code}, nil
+		return &amd64Kernel{code: code, N: n, Locality: true}, nil
 	} else {
 		// Emit optimized scalar locality kernel
 		template := []byte{
@@ -336,7 +347,7 @@ func CompileLocality(n int) (Kernel, error) {
 			return nil, err
 		}
 
-		return &amd64Kernel{code: code}, nil
+		return &amd64Kernel{code: code, N: n, Locality: true}, nil
 	}
 }
 

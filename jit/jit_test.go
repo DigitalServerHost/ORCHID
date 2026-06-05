@@ -100,3 +100,61 @@ func TestJITCompilationTime(t *testing.T) {
 		t.Errorf("JIT compiler overhead exceeded performance threshold: %s", elapsed)
 	}
 }
+
+/**
+ * @struct mockTraceHook
+ * @brief Simple mock implementation of TraceHook to test verification routing.
+ */
+type mockTraceHook struct {
+	called bool              ///< Flag indicating if OnExecute was invoked
+	meta   ExecutionMetadata ///< Metadata captured during the execution callback
+}
+
+/**
+ * @brief Callback method to record JIT execution details.
+ * 
+ * @param meta The runtime execution details.
+ */
+func (m *mockTraceHook) OnExecute(meta ExecutionMetadata) {
+	m.called = true
+	m.meta = meta
+}
+
+/**
+ * @brief Verifies that registering a trace hook captures execute pointer data.
+ * 
+ * @param t Go testing state handle.
+ */
+func TestJITTraceHook(t *testing.T) {
+	hook := &mockTraceHook{}
+	RegisterTraceHook(hook)
+	defer RegisterTraceHook(nil)
+
+	n := 64
+	a, b, c := generateMatrices(n)
+
+	k, err := CompileLocality(n)
+	if err != nil {
+		t.Fatalf("Failed to compile kernel: %v", err)
+	}
+	defer k.Free()
+
+	k.Execute(unsafe.Pointer(&a[0]), unsafe.Pointer(&b[0]), unsafe.Pointer(&c[0]))
+
+	if !hook.called {
+		t.Fatalf("Expected trace hook to be called, but it was not")
+	}
+
+	if hook.meta.N != n {
+		t.Errorf("Expected N=%d in metadata, got %d", n, hook.meta.N)
+	}
+
+	if !hook.meta.Locality {
+		t.Errorf("Expected Locality=true in metadata, got false")
+	}
+
+	if hook.meta.APtr != unsafe.Pointer(&a[0]) {
+		t.Errorf("Expected APtr=%p in metadata, got %p", unsafe.Pointer(&a[0]), hook.meta.APtr)
+	}
+}
+

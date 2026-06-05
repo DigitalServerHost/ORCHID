@@ -145,6 +145,16 @@ To support real-time execution mesh demands without writing temporary files to d
 
 ---
 
+### 3.5. Computational Verification & Isolated Trust Plane (Project VALKYRIE)
+In high-performance decentralized systems, runtime performance optimization must not compromise computational integrity. ORCHID enforces a strict separation of concerns between raw execution and trust verification:
+
+*   **Zero Prover Bloat:** To preserve ORCHID's bare-metal execution speed and lightweight container footprints, zero-knowledge prover generation (ZK-SNARK/STARK) and consensus logic are completely excluded from the ORCHID repository.
+*   **Verifier-Agnostic Design:** ORCHID provides clean, low-overhead tracing interfaces (such as scheduling queues and execution parameter records). Developers can plug in custom verification hooks to capture inputs, outputs, and kernel metadata.
+*   **Recommended Verification Layer:** We recommend utilizing **[Project VALKYRIE](https://github.com/DigitalServerHost/VALKYRIE)**—RAMNET's dedicated, out-of-band verification and zero-knowledge proof generation system. VALKYRIE ingests ORCHID's execution traces and output buffers to compile polynomial constraints and issue verification proofs, keeping the hot execution loop unburdened.
+*   **Local Sanity Validation:** For local testing, the JIT benchmarks run element-by-element equivalence verification between baseline flat outputs and locality-optimized outputs to validate compiler index and register correctness before timing sweeps.
+
+---
+
 ## 🐳 4. Orchestration & Static Quality Control
 
 ORCHID integrates modern tooling to guarantee code health:

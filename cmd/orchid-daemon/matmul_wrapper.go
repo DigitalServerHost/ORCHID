@@ -71,19 +71,27 @@ func median(values []float64) float64 {
 }
 
 /**
+ * @struct benchmarkConfig
+ * @brief Bundles variables and pointers passed to benchmark executors.
+ */
+type benchmarkConfig struct {
+	aPtr     unsafe.Pointer
+	bPtr     unsafe.Pointer
+	cfPtr    unsafe.Pointer
+	clPtr    unsafe.Pointer
+	flushPtr unsafe.Pointer
+	kFlat    jit.Kernel
+	kLoc     jit.Kernel
+}
+
+/**
  * @brief Executes pairs of flat vs locality benchmarks to measure cache speedups.
  * 
  * @param repeats Number of benchmark iterations to perform.
- * @param aPtr Pointer to matrix A.
- * @param bPtr Pointer to matrix B.
- * @param cfPtr Pointer to flat output buffer.
- * @param clPtr Pointer to locality output buffer.
- * @param flushPtr Pointer to cache flushing buffer space.
- * @param kFlat Pre-compiled JIT flat kernel.
- * @param kLoc Pre-compiled JIT locality kernel.
+ * @param cfg Pointer to benchmarkConfig payload.
  * @return Speedup values slice and printed log lines slice.
  */
-func runBenchmarkPairs(repeats int, aPtr, bPtr, cfPtr, clPtr, flushPtr unsafe.Pointer, kFlat, kLoc jit.Kernel) ([]float64, []string) {
+func runBenchmarkPairs(repeats int, cfg *benchmarkConfig) ([]float64, []string) {
 	var speedups []float64
 	var timingLines []string
 
@@ -93,29 +101,29 @@ func runBenchmarkPairs(repeats int, aPtr, bPtr, cfPtr, clPtr, flushPtr unsafe.Po
 
 		if r%2 == 0 {
 			order = "flat-first"
-			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
-			C.memset(cfPtr, 0, C.size_t(Bytes))
+			C.flush_cache_c((*C.uint8_t)(cfg.flushPtr), C.size_t(FlushBytes))
+			C.memset(cfg.cfPtr, 0, C.size_t(Bytes))
 			t0 := time.Now()
-			kFlat.Execute(aPtr, bPtr, cfPtr)
+			cfg.kFlat.Execute(cfg.aPtr, cfg.bPtr, cfg.cfPtr)
 			flatSec = time.Since(t0).Seconds()
 
-			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
-			C.memset(clPtr, 0, C.size_t(Bytes))
+			C.flush_cache_c((*C.uint8_t)(cfg.flushPtr), C.size_t(FlushBytes))
+			C.memset(cfg.clPtr, 0, C.size_t(Bytes))
 			t0 = time.Now()
-			kLoc.Execute(aPtr, bPtr, clPtr)
+			cfg.kLoc.Execute(cfg.aPtr, cfg.bPtr, cfg.clPtr)
 			localSec = time.Since(t0).Seconds()
 		} else {
 			order = "locality-first"
-			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
-			C.memset(clPtr, 0, C.size_t(Bytes))
+			C.flush_cache_c((*C.uint8_t)(cfg.flushPtr), C.size_t(FlushBytes))
+			C.memset(cfg.clPtr, 0, C.size_t(Bytes))
 			t0 := time.Now()
-			kLoc.Execute(aPtr, bPtr, clPtr)
+			cfg.kLoc.Execute(cfg.aPtr, cfg.bPtr, cfg.clPtr)
 			localSec = time.Since(t0).Seconds()
 
-			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
-			C.memset(cfPtr, 0, C.size_t(Bytes))
+			C.flush_cache_c((*C.uint8_t)(cfg.flushPtr), C.size_t(FlushBytes))
+			C.memset(cfg.cfPtr, 0, C.size_t(Bytes))
 			t0 = time.Now()
-			kFlat.Execute(aPtr, bPtr, cfPtr)
+			cfg.kFlat.Execute(cfg.aPtr, cfg.bPtr, cfg.cfPtr)
 			flatSec = time.Since(t0).Seconds()
 		}
 
@@ -129,6 +137,12 @@ func runBenchmarkPairs(repeats int, aPtr, bPtr, cfPtr, clPtr, flushPtr unsafe.Po
 	}
 
 	return speedups, timingLines
+}
+
+type benchmarkTraceHook struct{}
+
+func (b *benchmarkTraceHook) OnExecute(meta jit.ExecutionMetadata) {
+	// This empty callback is intentional to measure trace callback dispatch overhead.
 }
 
 /**
@@ -145,6 +159,10 @@ type BenchmarkOutputs struct {
 	Median       float64
 	Max          float64
 	Mean         float64
+	TraceMin     float64
+	TraceMedian  float64
+	TraceMax     float64
+	TraceMean    float64
 }
 
 /**
@@ -181,18 +199,66 @@ func writeBenchmarkOutputs(cfg *BenchmarkOutputs) error {
 		return err
 	}
 
-	// 3. Write speedups.json
-	speedupMap := map[string]string{
-		"min":    fmt.Sprintf("%.3fx", cfg.Min),
-		"median": fmt.Sprintf("%.3fx", cfg.Median),
-		"max":    fmt.Sprintf("%.3fx", cfg.Max),
-		"mean":   fmt.Sprintf("%.3fx", cfg.Mean),
+	// 3. Write speedups.json (Standard vs Trace comparative format)
+	speedupMap := map[string]map[string]string{
+		"standard": {
+			"min":    fmt.Sprintf("%.3fx", cfg.Min),
+			"median": fmt.Sprintf("%.3fx", cfg.Median),
+			"max":    fmt.Sprintf("%.3fx", cfg.Max),
+			"mean":   fmt.Sprintf("%.3fx", cfg.Mean),
+		},
+		"trace": {
+			"min":    fmt.Sprintf("%.3fx", cfg.TraceMin),
+			"median": fmt.Sprintf("%.3fx", cfg.TraceMedian),
+			"max":    fmt.Sprintf("%.3fx", cfg.TraceMax),
+			"mean":   fmt.Sprintf("%.3fx", cfg.TraceMean),
+		},
 	}
 	speedupJSON, err := json.MarshalIndent(speedupMap, "", "  ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(cfg.OutDir, "speedups.json"), append(speedupJSON, '\n'), 0644)
+}
+
+/**
+ * @brief Computes summary statistics from a speedup values slice.
+ * 
+ * @param speedups Slice of floating-point speedups.
+ * @return min, median, max, and mean speedups.
+ */
+func computeStats(speedups []float64) (float64, float64, float64, float64) {
+	minVal := speedups[0]
+	maxVal := speedups[0]
+	sumVal := 0.0
+	for _, v := range speedups {
+		if v < minVal {
+			minVal = v
+		}
+		if v > maxVal {
+			maxVal = v
+		}
+		sumVal += v
+	}
+	meanVal := sumVal / float64(len(speedups))
+	medianVal := median(speedups)
+	return minVal, medianVal, maxVal, meanVal
+}
+
+/**
+ * @brief Compares two result slices for structural equality.
+ * 
+ * @param cf Reference flat result slice.
+ * @param cl Locality-optimized result slice.
+ * @return error if any value mismatch is found.
+ */
+func verifyEquivalence(cf, cl []int32) error {
+	for i := 0; i < len(cf); i++ {
+		if cf[i] != cl[i] {
+			return fmt.Errorf("MISMATCH: Verification failure at index=%d flat=%d locality=%d", i, cf[i], cl[i])
+		}
+	}
+	return nil
 }
 
 /**
@@ -267,10 +333,8 @@ func RunLocalityBenchmark(repeats int, outDir string) (*LocalityResult, error) {
 	kLoc.Execute(aPtr, bPtr, clPtr)
 
 	// Verify equal outputs
-	for i := 0; i < Cells; i++ {
-		if cfSlice[i] != clSlice[i] {
-			return nil, fmt.Errorf("MISMATCH: Verification failure at index=%d flat=%d locality=%d", i, cfSlice[i], clSlice[i])
-		}
+	if err := verifyEquivalence(cfSlice, clSlice); err != nil {
+		return nil, err
 	}
 
 	// Calculate checksum of results
@@ -282,27 +346,42 @@ func RunLocalityBenchmark(repeats int, outDir string) (*LocalityResult, error) {
 	verifyMsg := fmt.Sprintf("VERIFY equal N=%d operations=%d cache_flush_bytes=%d", N, N*N*N, FlushBytes)
 	fmt.Println(verifyMsg)
 
-	// Collect timing pairs
-	speedups, timingLines := runBenchmarkPairs(repeats, aPtr, bPtr, cfPtr, clPtr, flushPtr, kFlat, kLoc)
+	benchCfg := &benchmarkConfig{
+		aPtr:     aPtr,
+		bPtr:     bPtr,
+		cfPtr:    cfPtr,
+		clPtr:    clPtr,
+		flushPtr: flushPtr,
+		kFlat:    kFlat,
+		kLoc:     kLoc,
+	}
+
+	// Collect standard timing pairs
+	speedups, timingLines := runBenchmarkPairs(repeats, benchCfg)
+
+	// Register trace hook for trace mode benchmarking
+	fmt.Println("\n--- ENABLING TRACE MODE ---")
+	jit.RegisterTraceHook(&benchmarkTraceHook{})
+
+	// Collect trace timing pairs
+	traceSpeedups, traceTimingLines := runBenchmarkPairs(repeats, benchCfg)
+
+	// Clean up trace hook registration
+	jit.RegisterTraceHook(nil)
+	fmt.Println("--- TRACE MODE DISABLED ---")
+	fmt.Println()
 
 	flushSinkMsg := fmt.Sprintf("FLUSH sink=%d", C.get_flush_sink())
 	fmt.Println(flushSinkMsg)
 
-	// Compute summary statistics
-	minVal := speedups[0]
-	maxVal := speedups[0]
-	sumVal := 0.0
-	for _, v := range speedups {
-		if v < minVal {
-			minVal = v
-		}
-		if v > maxVal {
-			maxVal = v
-		}
-		sumVal += v
-	}
-	meanVal := sumVal / float64(len(speedups))
-	medianVal := median(speedups)
+	// Compute statistics
+	minVal, medianVal, maxVal, meanVal := computeStats(speedups)
+	traceMinVal, traceMedianVal, traceMaxVal, traceMeanVal := computeStats(traceSpeedups)
+
+	// Merge timing lines for logging
+	allTimingLines := append([]string{"=== STANDARD MODE TIMINGS ==="}, timingLines...)
+	allTimingLines = append(allTimingLines, "=== TRACE MODE TIMINGS ===")
+	allTimingLines = append(allTimingLines, traceTimingLines...)
 
 	// Write output files
 	cfg := &BenchmarkOutputs{
@@ -310,11 +389,15 @@ func RunLocalityBenchmark(repeats int, outDir string) (*LocalityResult, error) {
 		TelemetryMsg: telemetryMsg,
 		VerifyMsg:    verifyMsg,
 		FlushSinkMsg: flushSinkMsg,
-		TimingLines:  timingLines,
+		TimingLines:  allTimingLines,
 		Min:          minVal,
 		Median:       medianVal,
 		Max:          maxVal,
 		Mean:         meanVal,
+		TraceMin:     traceMinVal,
+		TraceMedian:  traceMedianVal,
+		TraceMax:     traceMaxVal,
+		TraceMean:    traceMeanVal,
 	}
 	if err := writeBenchmarkOutputs(cfg); err != nil {
 		return nil, err
