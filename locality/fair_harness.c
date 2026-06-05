@@ -17,8 +17,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef __x86_64__
 #include <cpuid.h>
-#include <xmmintrin.h>
+#elif defined(__aarch64__)
+#ifdef __linux__
+#include <sys/auxv.h>
+#include <asm/hwcap.h>
+#endif
+#endif
 
 /**
  * @name Configuration Constants
@@ -43,6 +50,7 @@ extern void matmul_flat(const int32_t *a, const int32_t *b, int32_t *c);
  */
 extern void matmul_locality(const int32_t *a, const int32_t *b, int32_t *c);
 
+#ifdef __x86_64__
 /**
  * @brief Dynamic CPUID hardware capability check for AVX-512 foundation support.
  */
@@ -54,11 +62,38 @@ static int has_avx512f(void) {
     __cpuid_count(7, 0, eax, ebx, ecx, edx);
     return (ebx & (1 << 16)) != 0; // AVX-512 Foundation is bit 16 in EBX of CPUID leaf 7, subleaf 0
 }
+#elif defined(__aarch64__)
+/**
+ * @brief Dynamic hardware capability check for ARM64 SVE support.
+ */
+static int has_sve(void) {
+#if defined(__linux__) && defined(HWCAP_SVE)
+    return (getauxval(AT_HWCAP) & HWCAP_SVE) != 0;
+#else
+    return 0;
+#endif
+}
+
+/**
+ * @brief Dynamic hardware capability check for ARM64 NEON/ASIMD support.
+ */
+static int has_asimd(void) {
+#if defined(__linux__) && defined(HWCAP_ASIMD)
+    return (getauxval(AT_HWCAP) & HWCAP_ASIMD) != 0;
+#else
+    #if defined(__APPLE__)
+    return 1; // Apple Silicon always has NEON/ASIMD
+    #else
+    return 0;
+    #endif
+#endif
+}
+#endif
 
 /**
  * @brief Contiguous Locality-Aligned (I-K-J) fallback kernel in C.
- * Used when the host processor does not support native AVX-512 vector instructions.
- * Implements software cache prefetching via _mm_prefetch compiler intrinsics.
+ * Used when the host processor does not support native vector instructions.
+ * Implements software cache prefetching via GCC/Clang __builtin_prefetch.
  */
 static void matmul_locality_fallback(const int32_t *a, const int32_t *b, int32_t *c) {
     const int lookahead_stride = 16; // Prefetch 16 elements (64 bytes, 1 cache line) ahead
@@ -67,8 +102,8 @@ static void matmul_locality_fallback(const int32_t *a, const int32_t *b, int32_t
             int32_t aik = a[i * N + k];
             for (int j = 0; j < N; ++j) {
                 if (j + lookahead_stride < N) {
-                    _mm_prefetch((const char *)&b[k * N + j + lookahead_stride], _MM_HINT_T0);
-                    _mm_prefetch((const char *)&c[i * N + j + lookahead_stride], _MM_HINT_T0);
+                    __builtin_prefetch(&b[k * N + j + lookahead_stride], 0, 3);
+                    __builtin_prefetch(&c[i * N + j + lookahead_stride], 1, 3);
                 }
                 c[i * N + j] += aik * b[k * N + j];
             }
@@ -170,16 +205,32 @@ int main(void) {
 
     fill(a, b);
 
-    // Detect host AVX-512 capability at runtime
-    int use_avx512 = has_avx512f();
-    if (use_avx512) {
+    // Detect host capabilities at runtime and select appropriate dispatch path
+    int use_vector = 0;
+#ifdef __x86_64__
+    use_vector = has_avx512f();
+    if (use_vector) {
         printf("HARDWARE TELEMETRY: Native AVX-512 support detected. Dispatching to assembly vector kernel.\n");
     } else {
         printf("HARDWARE TELEMETRY: AVX-512 not supported. Dispatching to optimized scalar fallback kernel.\n");
     }
+#elif defined(__aarch64__)
+    use_vector = has_sve() || has_asimd();
+    if (use_vector) {
+        if (has_sve()) {
+            printf("HARDWARE TELEMETRY: Native ARM64 SVE support detected. Dispatching to assembly vector kernel.\n");
+        } else {
+            printf("HARDWARE TELEMETRY: Native ARM64 NEON/ASIMD support detected. Dispatching to assembly vector kernel.\n");
+        }
+    } else {
+        printf("HARDWARE TELEMETRY: ARM64 Vector extensions not supported. Dispatching to optimized scalar fallback kernel.\n");
+    }
+#else
+    printf("HARDWARE TELEMETRY: Unsupported architecture. Dispatching to optimized scalar fallback kernel.\n");
+#endif
 
     void (*locality_kernel)(const int32_t*, const int32_t*, int32_t*) = 
-        use_avx512 ? matmul_locality : matmul_locality_fallback;
+        use_vector ? matmul_locality : matmul_locality_fallback;
 
     // Initial warm run & arithmetic validation check
     memset(cf, 0, BYTES);

@@ -6,7 +6,7 @@
 [![Tech: Go](https://img.shields.io/badge/Tech-Go_1.20%2B-00ADD8.svg)](#)
 [![Tech: Python](https://img.shields.io/badge/Tech-Python_3.10%2B-blue.svg)](#)
 [![Tech: C](https://img.shields.io/badge/Tech-C11-blue.svg)](#)
-[![Tech: Assembly](https://img.shields.io/badge/Tech-x86--64_Assembly-orange.svg)](#)
+[![Tech: Assembly](https://img.shields.io/badge/Tech-x86--64%20%2F%20ARM64%20Assembly-orange.svg)](#)
 [![GitHub Release](https://img.shields.io/github/v/release/DigitalServerHost/ORCHID?include_prereleases&sort=semver&color=FF69B4)](https://github.com/DigitalServerHost/ORCHID/releases/latest)
 [![GHCR Container](https://img.shields.io/badge/GHCR-Package_Registry-blueviolet.svg?logo=docker&logoColor=white)](https://github.com/DigitalServerHost/ORCHID/pkgs/container/orchid)
 [![Downloads](https://img.shields.io/github/downloads/DigitalServerHost/ORCHID/total?color=blue)](https://github.com/DigitalServerHost/ORCHID/releases)
@@ -29,12 +29,11 @@ Project **ORCHID** is the low-level micro-architectural execution core of the RA
 
 The absolute base foundation, research primitives, and original codebase layout can be found preserved on the legacy archive branch:
 👉 **[View the Baseline Concept Code (`tree/gatchimuchio-original`)](https://github.com/DigitalServerHost/ORCHID/tree/gatchimuchio-original)**
-
 ---
 
 ## 📊 Reproduced Locality Performance
 
-Under identical, mathematically verified logical execution constraints (512x512 matrix size, double-triplicate verification, and total 64 MiB L1-L3 cache flushes between timing runs), the locality-aligned (I-K-J) memory mapping sweeps demonstrate exceptionally high performance improvements. Badges below are dynamically parsed from current timing sweeps:
+Under identical, mathematically verified logical execution constraints (512x512 matrix size and double-triplicate verification), the locality-aligned memory mapping sweeps demonstrate exceptionally high performance improvements. Badges below are dynamically parsed from current timing sweeps:
 
 | Metric              | Speedup                                                                                                                                                                                                                                       |
 | :------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -45,8 +44,20 @@ Under identical, mathematically verified logical execution constraints (512x512 
 
 > [!NOTE]
 > **Understanding the Speedup Profiles:**
-> - **Physical Cache Locality (C Harness)**: The dynamic badges above measure the hardware execution speedup of cache-blocked locality-aligned loops (matrix multiplication) over flat baselines, yielding **3.6x - 4.0x** actual hardware speedups.
+> - **Physical Cache Locality (C Harness)**: The dynamic badges above measure the hardware execution speedup of cache-blocked locality-aligned loops (matrix multiplication) over flat baselines, yielding **3.0x - 3.4x** actual hardware speedups on warm cache lines.
 > - **Parallel Memory Scheduler (Go Simulator)**: The scheduler unit tests (`TestBankedSchedulerTriad`) run a software-simulated queue model (STREAM-Triad) to measure bank serialization and parallel role routing. Because STREAM-Triad partitions requests into 3 distinct logical data streams (B-read, C-read, A-write), mapping them to 3 independent memory banks achieves a theoretical parallel speedup limit of exactly **3.0x** (which the Go scheduler hits at exactly **3.000x** cycle reduction).
+
+---
+
+## 🖥️ Platform Target Support
+
+Project ORCHID features a **Heterogeneous Hardware Dispatch Plane** to scale execution guarantees across multiple architectures. The assembler (`orchid/assembler.py`) dynamically auto-detects the host architecture (or accepts a target override parameter via `--target`) and emits optimized assembly targets:
+
+- **`x86_64` (AVX-512)**: Standard vectorized loop utilizing 512-bit vector registers with active `prefetcht0` hardware preloading.
+- **`arm64` (NEON / SVE)**: Vectorized execution using ARM64 NEON registers (`v0-v31`) with `prfm pldl1keep` software lookahead prefetching offsets.
+- **`apple_amx` (Apple Silicon)**: Low-level matrix coprocessor wrapper with custom `amxinit`/`amxstop` instructions (`.word` directives).
+
+At runtime, the benchmarking harness (`locality/fair_harness.c`) performs dynamic hardware capability telemetry (`CPUID` for x86-64, `getauxval(AT_HWCAP)` for ARM64 SVE/ASIMD on Linux) to dispatch execution to the optimal native assembly kernel.
 
 ---
 
