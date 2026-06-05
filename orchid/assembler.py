@@ -217,6 +217,9 @@ matmul_locality:
     imull ${n}, %eax
     addl %r10d, %eax
     
+    # Active prefetch of upcoming Matrix B cache line (16 elements = 64 bytes ahead)
+    prefetcht0 64(%rsi,%rax,4)
+    
     # Load 16 dense 32-bit integers from B[k][j] into %zmm1
     vmovdqu32 (%rsi,%rax,4), %zmm1
 
@@ -227,6 +230,9 @@ matmul_locality:
     movl %r8d, %eax
     imull ${n}, %eax
     addl %r10d, %eax
+    
+    # Active prefetch of upcoming Matrix C cache line (16 elements = 64 bytes ahead)
+    prefetcht0 64(%rdx,%rax,4)
     
     # Load 16 dense 32-bit integers from C[i][j] into %zmm2
     vmovdqu32 (%rdx,%rax,4), %zmm2
