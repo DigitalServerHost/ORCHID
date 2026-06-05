@@ -49,15 +49,21 @@ Under identical, mathematically verified logical execution constraints (512x512 
 
 ---
 
-## 🖥️ Platform Target Support
+## 🖥️ Platform Target Support & JIT Engine
 
-Project ORCHID features a **Heterogeneous Hardware Dispatch Plane** to scale execution guarantees across multiple architectures. The assembler (`orchid/assembler.py`) dynamically auto-detects the host architecture (or accepts a target override parameter via `--target`) and emits optimized assembly targets:
+Project ORCHID features a **Heterogeneous Hardware Dispatch Plane** to scale execution guarantees across multiple architectures:
+*   **Static AOT Assembly Emitters (`orchid/assembler.py`)**: Generates target-specific optimized assembly source code:
+    - **`x86_64` (AVX-512)**: 512-bit vector registers with active `prefetcht0` preloading.
+    - **`arm64` (NEON / SVE)**: NEON registers (`v0-v31`) with `prfm pldl1keep` software lookahead prefetching offsets.
+    - **`apple_amx` (Apple Silicon)**: Low-level matrix coprocessor wrapper via `amxinit`/`amxstop` instructions.
+*   **Dynamic JIT Compiler Core (`jit/`)**: Executed natively by the Go daemon, compiling matrix sizes ($N$) into memory-resident machine code at runtime. It checks host capabilities to select the optimal path:
+    - **`AVX-512` JIT Path**: Vectorized 16-way integer strides when native AVX-512 is supported.
+    - **`AVX2` JIT Path**: Vectorized 8-way VEX-encoded SIMD utilizing memory-resident broadcasts (`vpbroadcastd`) to avoid EVEX instruction page collisions on non-AVX-512 x86_64 CPUs.
+    - **`Scalar` AMD64 JIT Path**: Standard pointer execution loops.
+    - **`ARM64/Other` Fallback**: Native Go reference model to maintain execution stability.
 
-- **`x86_64` (AVX-512)**: Standard vectorized loop utilizing 512-bit vector registers with active `prefetcht0` hardware preloading.
-- **`arm64` (NEON / SVE)**: Vectorized execution using ARM64 NEON registers (`v0-v31`) with `prfm pldl1keep` software lookahead prefetching offsets.
-- **`apple_amx` (Apple Silicon)**: Low-level matrix coprocessor wrapper with custom `amxinit`/`amxstop` instructions (`.word` directives).
-
-At runtime, the benchmarking harness (`locality/fair_harness.c`) performs dynamic hardware capability telemetry (`CPUID` for x86-64, `getauxval(AT_HWCAP)` for ARM64 SVE/ASIMD on Linux) to dispatch execution to the optimal native assembly kernel.
+### 🔒 W^X Memory Security
+The JIT compiler strictly enforces **Write-XOR-Execute (W^X)** memory constraints. Page memory is allocated with write permission (`syscall.PROT_WRITE`), code is generated, and then the page is transitioned to read-execute (`syscall.PROT_EXEC`) via `syscall.Mprotect` before execution.
 
 ---
 
