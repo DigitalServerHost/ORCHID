@@ -43,6 +43,11 @@ Under identical, mathematically verified logical execution constraints (512x512 
 | **Maximum Speedup** | ![Speedup Max](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.max&label=Speedup%20Max&color=brightgreen)         |
 | **Mean Speedup**    | ![Speedup Mean](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FDigitalServerHost%2FORCHID%2Fmain%2Fevidence%2Freproduced%2Fspeedups.json&query=%24.mean&label=Speedup%20Mean&color=orange)           |
 
+> [!NOTE]
+> **Understanding the Speedup Profiles:**
+> - **Physical Cache Locality (C Harness)**: The dynamic badges above measure the hardware execution speedup of cache-blocked locality-aligned loops (matrix multiplication) over flat baselines, yielding **3.6x - 4.0x** actual hardware speedups.
+> - **Parallel Memory Scheduler (Go Simulator)**: The scheduler unit tests (`TestBankedSchedulerTriad`) run a software-simulated queue model (STREAM-Triad) to measure bank serialization and parallel role routing. Because STREAM-Triad partitions requests into 3 distinct logical data streams (B-read, C-read, A-write), mapping them to 3 independent memory banks achieves a theoretical parallel speedup limit of exactly **3.0x** (which the Go scheduler hits at exactly **3.000x** cycle reduction).
+
 ---
 
 ## 🏛️ Centralized Architectural Design & Blueprint
