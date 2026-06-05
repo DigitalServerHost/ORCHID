@@ -46,6 +46,13 @@ ORCHID/
 │   ├── build/               # Directory containing compiled object targets
 │   ├── fair_harness.c       # C11 Timing runner utilizing cache flushes
 │   └── matmul.plan          # Program parameter declaration configurations
+├── jit/                     # Just-In-Time (JIT) Dynamic Compilation Subsystem
+│   ├── jit.go               # Memory management, W^X page protection & Go fallbacks
+│   ├── jit_amd64.go         # AMD64 instruction emitters (AVX-512, AVX2, and scalar)
+│   ├── jit_amd64.s          # System V ABI pointer jump stubs & CPUID detection
+│   ├── jit_arm64.go         # ARM64 architecture portable fallback
+│   ├── jit_other.go         # Generic platform-independent fallback
+│   └── jit_test.go          # JIT math verification & compilation latency benchmark suite
 ├── orchid/                  # Packaged, Publishable Python SDK Core
 │   ├── __init__.py          # SDK Package version registration & exports
 │   ├── aggregator.py        # Locality results timing aggregator
@@ -124,6 +131,17 @@ The execution layer implements CADENCE routing using native Go concurrency primi
 *   **Thread-Safety:** Channels and mutex fences coordinate incoming tensor requests.
 *   **Atomic Registers:** Employs low-overhead `sync/atomic` increment loops to bypass GC locks.
 *   **STREAM-Triad Benchmarking:** Verifies parallel bank routing under 16,384-element concurrent allocations, matching simulator properties at a **`2.879x` physical speedup**.
+
+---
+
+### 3.4. JIT Compiler Subsystem (Dynamic Memory Compilation)
+To support real-time execution mesh demands without writing temporary files to disk or invoking external toolchains (GCC), ORCHID integrates a dynamic, memory-resident JIT compiler:
+*   **W^X Memory Security Model:** Strictly implements Write-XOR-Execute security page allocations. It allocates writable pages via `syscall.Mmap`, compiles instructions into the segment, and then transitions page protection to read-executable via `syscall.Mprotect` before execution.
+*   **Three-Tier x86_64 Hardware Pathing:**
+    1. *AVX-512:* Vectorized 16-way integer strides when CPU capability checks succeed.
+    2. *AVX2:* Vectorized 8-way VEX-encoded SIMD utilizing memory-resident broadcasts (`vpbroadcastd`) to prevent instruction page collisions.
+    3. *Scalar:* Core x86_64 pointer instruction loops.
+*   **ABI Bridging:** Utilizes a custom assembly stub `callJIT` in `jit_amd64.s` to route Go parameter structs onto AMD64 ABI registers (`RDI`, `RSI`, `RDX`), achieving execution speeds matching pre-compiled C binaries with only microsecond-level emission overhead.
 
 ---
 

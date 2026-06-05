@@ -1,8 +1,8 @@
 /**
  * @file matmul_wrapper.go
- * @brief Go wrapper linking C/assembly matrix kernels and executing locality timing benchmarks.
+ * @brief Go wrapper linking JIT compilation and executing locality timing benchmarks.
  * 
- * Coordinate AVX-512/scalar dispatch execution, physical memory alignment allocations,
+ * Coordinate JIT execution, physical memory alignment allocations,
  * CPU cache flushes, statistical speedup analysis, and timing files creation.
  * 
  * Originator: Teppei Oohira (@gatchimuchio) / 大平鉄兵
@@ -17,10 +17,6 @@ package main
 #include <stdlib.h>
 #include <string.h>
 
-int has_avx512f(void);
-void matmul_flat(const int32_t *a, const int32_t *b, int32_t *c);
-void matmul_locality(const int32_t *a, const int32_t *b, int32_t *c);
-void matmul_locality_fallback(const int32_t *a, const int32_t *b, int32_t *c);
 void flush_cache_c(uint8_t *buf, size_t size);
 uint64_t get_flush_sink(void);
 */
@@ -33,6 +29,8 @@ import (
 	"sort"
 	"time"
 	"unsafe"
+
+	"ORCHID/jit"
 )
 
 const (
@@ -73,22 +71,6 @@ func median(values []float64) float64 {
 }
 
 /**
- * @brief Invokes either the AVX-512 assembly kernel or the scalar fallback kernel.
- * 
- * @param aPtr Pointer to input matrix A.
- * @param bPtr Pointer to input matrix B.
- * @param clPtr Pointer to output matrix C.
- * @param useAVX512 Flag indicating if AVX-512 should be executed.
- */
-func executeLocalityKernel(aPtr, bPtr, clPtr unsafe.Pointer, useAVX512 bool) {
-	if useAVX512 {
-		C.matmul_locality((*C.int32_t)(aPtr), (*C.int32_t)(bPtr), (*C.int32_t)(clPtr))
-	} else {
-		C.matmul_locality_fallback((*C.int32_t)(aPtr), (*C.int32_t)(bPtr), (*C.int32_t)(clPtr))
-	}
-}
-
-/**
  * @brief Executes pairs of flat vs locality benchmarks to measure cache speedups.
  * 
  * @param repeats Number of benchmark iterations to perform.
@@ -97,10 +79,11 @@ func executeLocalityKernel(aPtr, bPtr, clPtr unsafe.Pointer, useAVX512 bool) {
  * @param cfPtr Pointer to flat output buffer.
  * @param clPtr Pointer to locality output buffer.
  * @param flushPtr Pointer to cache flushing buffer space.
- * @param useAVX512 Flag for AVX-512 hardware support.
+ * @param kFlat Pre-compiled JIT flat kernel.
+ * @param kLoc Pre-compiled JIT locality kernel.
  * @return Speedup values slice and printed log lines slice.
  */
-func runBenchmarkPairs(repeats int, aPtr, bPtr, cfPtr, clPtr, flushPtr unsafe.Pointer, useAVX512 bool) ([]float64, []string) {
+func runBenchmarkPairs(repeats int, aPtr, bPtr, cfPtr, clPtr, flushPtr unsafe.Pointer, kFlat, kLoc jit.Kernel) ([]float64, []string) {
 	var speedups []float64
 	var timingLines []string
 
@@ -113,26 +96,26 @@ func runBenchmarkPairs(repeats int, aPtr, bPtr, cfPtr, clPtr, flushPtr unsafe.Po
 			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
 			C.memset(cfPtr, 0, C.size_t(Bytes))
 			t0 := time.Now()
-			C.matmul_flat((*C.int32_t)(aPtr), (*C.int32_t)(bPtr), (*C.int32_t)(cfPtr))
+			kFlat.Execute(aPtr, bPtr, cfPtr)
 			flatSec = time.Since(t0).Seconds()
 
 			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
 			C.memset(clPtr, 0, C.size_t(Bytes))
 			t0 = time.Now()
-			executeLocalityKernel(aPtr, bPtr, clPtr, useAVX512)
+			kLoc.Execute(aPtr, bPtr, clPtr)
 			localSec = time.Since(t0).Seconds()
 		} else {
 			order = "locality-first"
 			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
 			C.memset(clPtr, 0, C.size_t(Bytes))
 			t0 := time.Now()
-			executeLocalityKernel(aPtr, bPtr, clPtr, useAVX512)
+			kLoc.Execute(aPtr, bPtr, clPtr)
 			localSec = time.Since(t0).Seconds()
 
 			C.flush_cache_c((*C.uint8_t)(flushPtr), C.size_t(FlushBytes))
 			C.memset(cfPtr, 0, C.size_t(Bytes))
 			t0 = time.Now()
-			C.matmul_flat((*C.int32_t)(aPtr), (*C.int32_t)(bPtr), (*C.int32_t)(cfPtr))
+			kFlat.Execute(aPtr, bPtr, cfPtr)
 			flatSec = time.Since(t0).Seconds()
 		}
 
@@ -258,20 +241,30 @@ func RunLocalityBenchmark(repeats int, outDir string) (*LocalityResult, error) {
 		bSlice[i] = int32((uint32(i)*13 + 5) % 7) - 3
 	}
 
-	// Detect host AVX-512 capability at runtime
-	useAVX512 := C.has_avx512f() != 0
-	telemetryMsg := "HARDWARE TELEMETRY: AVX-512 not supported. Dispatching to optimized scalar fallback kernel."
-	if useAVX512 {
-		telemetryMsg = "HARDWARE TELEMETRY: Native AVX-512 support detected. Dispatching to assembly vector kernel."
+	// Dynamic compile dynamic JIT kernels and measure compilation latency
+	tJitStart := time.Now()
+	kFlat, err := jit.CompileFlat(N)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile JIT flat kernel: %w", err)
 	}
+	defer kFlat.Free()
+
+	kLoc, err := jit.CompileLocality(N)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile JIT locality kernel: %w", err)
+	}
+	defer kLoc.Free()
+	jitElapsed := time.Since(tJitStart)
+
+	telemetryMsg := fmt.Sprintf("HARDWARE TELEMETRY: JIT compiled kernels in %s. Executing bare-metal blocks via W^X function pointers.", jitElapsed)
 	fmt.Println(telemetryMsg)
 
 	// Initial warm run & arithmetic validation check
 	C.memset(cfPtr, 0, C.size_t(Bytes))
 	C.memset(clPtr, 0, C.size_t(Bytes))
 
-	C.matmul_flat((*C.int32_t)(unsafe.Pointer(aPtr)), (*C.int32_t)(unsafe.Pointer(bPtr)), (*C.int32_t)(unsafe.Pointer(cfPtr)))
-	executeLocalityKernel(aPtr, bPtr, clPtr, useAVX512)
+	kFlat.Execute(aPtr, bPtr, cfPtr)
+	kLoc.Execute(aPtr, bPtr, clPtr)
 
 	// Verify equal outputs
 	for i := 0; i < Cells; i++ {
@@ -290,7 +283,7 @@ func RunLocalityBenchmark(repeats int, outDir string) (*LocalityResult, error) {
 	fmt.Println(verifyMsg)
 
 	// Collect timing pairs
-	speedups, timingLines := runBenchmarkPairs(repeats, aPtr, bPtr, cfPtr, clPtr, flushPtr, useAVX512)
+	speedups, timingLines := runBenchmarkPairs(repeats, aPtr, bPtr, cfPtr, clPtr, flushPtr, kFlat, kLoc)
 
 	flushSinkMsg := fmt.Sprintf("FLUSH sink=%d", C.get_flush_sink())
 	fmt.Println(flushSinkMsg)
