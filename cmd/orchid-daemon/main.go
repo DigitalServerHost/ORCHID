@@ -691,7 +691,12 @@ const evidenceRoot = "evidence"
  */
 func validateRemoteOutDir(dir string) error {
 	clean := filepath.Clean(dir)
-	if !filepath.IsLocal(clean) {
+	// Check for absolute paths
+	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "\\") {
+		return fmt.Errorf("out_dir %q must be a relative path inside %s/", dir, evidenceRoot)
+	}
+	// Check for path traversal escaping current directory
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("out_dir %q must be a relative path inside %s/", dir, evidenceRoot)
 	}
 	if clean != evidenceRoot && !strings.HasPrefix(clean, evidenceRoot+string(filepath.Separator)) {
@@ -867,9 +872,16 @@ func runAllCLI(simDir, locDir string) {
  * @brief main executable entry point routing execution flags.
  */
 func main() {
+	defaultAddr := "127.0.0.1:9000"
+	if envAddr := os.Getenv("ORCHID_ADDR"); envAddr != "" {
+		defaultAddr = envAddr
+	} else if envPort := os.Getenv("ORCHID_PORT"); envPort != "" {
+		defaultAddr = "127.0.0.1:" + envPort
+	}
+
 	modeFlag := flag.String("mode", "daemon", "Execution mode: daemon, simulation, locality, all")
 	planFlag := flag.String("plan", "", "Path to local JSON plan file to execute (or '-' for stdin)")
-	addrFlag := flag.String("addr", "127.0.0.1:9000", "TCP address to listen on in daemon mode (use 0.0.0.0:9000 to expose on all interfaces)")
+	addrFlag := flag.String("addr", defaultAddr, "TCP address to listen on in daemon mode (env: ORCHID_ADDR / ORCHID_PORT; use 0.0.0.0:9000 to expose on all interfaces)")
 	outDirFlag := flag.String("out-dir", "", "Custom output directory for files (overrides defaults)")
 	flag.Parse()
 

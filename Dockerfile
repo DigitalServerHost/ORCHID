@@ -11,7 +11,7 @@ FROM debian:bookworm-slim AS base
 # Prevent interactive prompts during installs
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install core build essentials, G7 compiler, and Python Dev headers (needed by Nuitka)
+# Install core build essentials and Python Dev headers (needed by Nuitka)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     python3-dev \
@@ -20,10 +20,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ca-certificates \
     python3 \
-    golang-go \
     && rm -rf /var/lib/apt/lists/*
 
-# Embed Astral 'uv' from its official distribution image
+# Install golang toolchain (Go 1.23)
+COPY --from=golang:1.23-bookworm /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# Install Astral 'uv' from its official distribution image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uv/bin/
 ENV PATH="/uv/bin:${PATH}"
 
