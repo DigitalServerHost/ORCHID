@@ -647,6 +647,10 @@ func handleConnection(conn net.Conn) {
 
 	if action == "simulation" || action == "all" {
 		n, scalar, service, compute, trace, out := parseSimPayload(payload.Simulation)
+		if err := validateRemoteOutDir(out); err != nil {
+			writeErrorResponse(conn, fmt.Sprintf("simulation rejected: %v", err))
+			return
+		}
 		res, err := RunSimulationBenchmark(n, scalar, service, compute, trace, out)
 		if err != nil {
 			writeErrorResponse(conn, fmt.Sprintf("simulation failed: %v", err))
@@ -657,6 +661,10 @@ func handleConnection(conn net.Conn) {
 
 	if action == "locality" || action == "all" {
 		repeats, out := parseLocalityPayload(payload.Locality)
+		if err := validateRemoteOutDir(out); err != nil {
+			writeErrorResponse(conn, fmt.Sprintf("locality benchmark rejected: %v", err))
+			return
+		}
 		res, err := RunLocalityBenchmark(repeats, out)
 		if err != nil {
 			writeErrorResponse(conn, fmt.Sprintf("locality benchmark failed: %v", err))
@@ -667,6 +675,29 @@ func handleConnection(conn net.Conn) {
 
 	responseBytes, _ := json.Marshal(response)
 	conn.Write(append(responseBytes, '\n'))
+}
+
+// evidenceRoot is the only directory tree that remote TCP clients may write into.
+const evidenceRoot = "evidence"
+
+/**
+ * @brief Rejects output directories supplied over the network that would escape the evidence tree.
+ *
+ * Remote clients are untrusted, so an out_dir taken from a TCP payload must be a relative,
+ * local path that stays inside evidence/. Local plan files and CLI flags are not affected.
+ *
+ * @param dir Output directory resolved from the client payload (or its default).
+ * @return nil if the directory is allowed, otherwise an error describing why it was rejected.
+ */
+func validateRemoteOutDir(dir string) error {
+	clean := filepath.Clean(dir)
+	if !filepath.IsLocal(clean) {
+		return fmt.Errorf("out_dir %q must be a relative path inside %s/", dir, evidenceRoot)
+	}
+	if clean != evidenceRoot && !strings.HasPrefix(clean, evidenceRoot+string(filepath.Separator)) {
+		return fmt.Errorf("out_dir %q must be inside %s/", dir, evidenceRoot)
+	}
+	return nil
 }
 
 /**
@@ -761,7 +792,7 @@ func executePlan(planPath string, customOutDir string) {
 /**
  * @brief Listens on TCP sockets to serve incoming planning payload requests.
  * 
- * @param addr Address string to bind to (e.g. ":9000").
+ * @param addr Address string to bind to (default "127.0.0.1:9000"; loopback only).
  */
 func runDaemon(addr string) {
 	ln, err := net.Listen("tcp", addr)
@@ -838,7 +869,7 @@ func runAllCLI(simDir, locDir string) {
 func main() {
 	modeFlag := flag.String("mode", "daemon", "Execution mode: daemon, simulation, locality, all")
 	planFlag := flag.String("plan", "", "Path to local JSON plan file to execute (or '-' for stdin)")
-	addrFlag := flag.String("addr", ":9000", "TCP address to listen on in daemon mode")
+	addrFlag := flag.String("addr", "127.0.0.1:9000", "TCP address to listen on in daemon mode (use 0.0.0.0:9000 to expose on all interfaces)")
 	outDirFlag := flag.String("out-dir", "", "Custom output directory for files (overrides defaults)")
 	flag.Parse()
 
