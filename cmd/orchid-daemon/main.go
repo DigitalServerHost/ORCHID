@@ -651,6 +651,10 @@ func handleConnection(conn net.Conn) {
 			writeErrorResponse(conn, fmt.Sprintf("simulation rejected: %v", err))
 			return
 		}
+		if err := validateRemoteSimParams(n, trace); err != nil {
+			writeErrorResponse(conn, fmt.Sprintf("simulation rejected: %v", err))
+			return
+		}
 		res, err := RunSimulationBenchmark(n, scalar, service, compute, trace, out)
 		if err != nil {
 			writeErrorResponse(conn, fmt.Sprintf("simulation failed: %v", err))
@@ -662,6 +666,10 @@ func handleConnection(conn net.Conn) {
 	if action == "locality" || action == "all" {
 		repeats, out := parseLocalityPayload(payload.Locality)
 		if err := validateRemoteOutDir(out); err != nil {
+			writeErrorResponse(conn, fmt.Sprintf("locality benchmark rejected: %v", err))
+			return
+		}
+		if err := validateRemoteLocalityParams(repeats); err != nil {
 			writeErrorResponse(conn, fmt.Sprintf("locality benchmark rejected: %v", err))
 			return
 		}
@@ -679,6 +687,38 @@ func handleConnection(conn net.Conn) {
 
 // evidenceRoot is the only directory tree that remote TCP clients may write into.
 const evidenceRoot = "evidence"
+
+// Bounds applied to parameters supplied over the network. They cap the work a
+// single request can trigger; a huge n allocates O(n) buffers (and can crash the
+// daemon via a makeslice panic), a huge trace_limit grows the trace buffer, and a
+// huge repeats count reruns the matmul benchmark without limit. Local --plan runs
+// are trusted and not subject to these. Operators can tune the values.
+const (
+	maxRemoteSimN           = 1 << 20 // 1,048,576 elements per buffer
+	maxRemoteTraceLimit     = 1 << 16 // 65,536 recorded trace events
+	maxRemoteLocalityRepeat = 64      // benchmark repetitions
+)
+
+// validateRemoteSimParams rejects simulation parameters from a network client
+// that would trigger excessive allocation or runtime.
+func validateRemoteSimParams(n, traceLimit int) error {
+	if n > maxRemoteSimN {
+		return fmt.Errorf("n=%d exceeds maximum %d for network requests", n, maxRemoteSimN)
+	}
+	if traceLimit > maxRemoteTraceLimit {
+		return fmt.Errorf("trace_limit=%d exceeds maximum %d for network requests", traceLimit, maxRemoteTraceLimit)
+	}
+	return nil
+}
+
+// validateRemoteLocalityParams rejects a locality repeat count from a network
+// client that would rerun the benchmark an excessive number of times.
+func validateRemoteLocalityParams(repeats int) error {
+	if repeats > maxRemoteLocalityRepeat {
+		return fmt.Errorf("repeats=%d exceeds maximum %d for network requests", repeats, maxRemoteLocalityRepeat)
+	}
+	return nil
+}
 
 /**
  * @brief Rejects output directories supplied over the network that would escape the evidence tree.
